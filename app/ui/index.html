@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kawn Pulse Engine — Demo UI</title>
+    <link rel="stylesheet" href="/ui/assets/styles.css" />
+  </head>
+  <body>
+    <div class="bg"></div>
+    <main class="container">
+      <header class="header">
+        <div>
+          <div class="brand">Kawn Pulse Engine</div>
+          <div class="subtitle">Explore reactions, quotes, themes, and sentiment across sources.</div>
+        </div>
+        <a class="chip" href="/docs" target="_blank" rel="noreferrer">Open API Docs</a>
+      </header>
+
+      <section class="search">
+        <div class="searchBox">
+          <input id="query" type="text" placeholder="Try: Creed 3, Real Madrid, AI tools, World Cup 2026…" />
+          <button id="searchBtn">Search Pulse</button>
+        </div>
+        <div class="hint">
+          Runs in mock mode by default. If keys are configured and mock is off, it will use live Reddit/YouTube + RSS.
+        </div>
+      </section>
+
+      <section id="status" class="status hidden"></section>
+
+      <section id="summary" class="grid hidden">
+        <div class="panel">
+          <div class="panelTitle">AI Summary</div>
+          <div id="summaryText" class="summaryText"></div>
+        </div>
+        <div class="panel">
+          <div class="panelTitle">Sentiment</div>
+          <div class="sentRow">
+            <div class="sentLabel" id="sentLabel"></div>
+            <div class="sentScore" id="sentScore"></div>
+          </div>
+          <div class="bars">
+            <div class="bar">
+              <div class="barName">Positive</div>
+              <div class="barTrack"><div id="barPos" class="barFill pos"></div></div>
+              <div id="posPct" class="barPct"></div>
+            </div>
+            <div class="bar">
+              <div class="barName">Neutral</div>
+              <div class="barTrack"><div id="barNeu" class="barFill neu"></div></div>
+              <div id="neuPct" class="barPct"></div>
+            </div>
+            <div class="bar">
+              <div class="barName">Negative</div>
+              <div class="barTrack"><div id="barNeg" class="barFill neg"></div></div>
+              <div id="negPct" class="barPct"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panelTitle">Themes</div>
+          <div id="themes" class="tags"></div>
+        </div>
+        <div class="panel">
+          <div class="panelTitle">Sources</div>
+          <div id="sources" class="sourceList"></div>
+        </div>
+      </section>
+
+      <section class="cardsHeader">
+        <div class="panelTitle">Pulse Cards</div>
+        <div class="cardsMeta">
+          <span id="topicId" class="mono"></span>
+          <button id="refreshBtn" class="ghost hidden">Refresh</button>
+        </div>
+      </section>
+
+      <section id="cards" class="cards hidden"></section>
+
+      <footer class="footer">
+        <div class="muted">Kawn Pulse is not a normal search engine — it’s a topic pulse: quotes, reactions, themes, sentiment, summaries.</div>
+      </footer>
+    </main>
+
+    <script src="/ui/assets/app.js"></script>
+  </body>
+</html>
+
