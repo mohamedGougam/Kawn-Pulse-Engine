@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: kawn-pulse-engine
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENABLE_MOCK_DATA
+        value: "true"
+      - key: DATABASE_URL
+        value: sqlite:////tmp/kawn_pulse.db
+      - key: SCHEDULER_ENABLED
+        value: "false"
+      - key: REDDIT_USER_AGENT
+        value: KawnPulseEngine/1.0
+      - key: NEWS_RSS_FEEDS
+        value: https://news.google.com/rss/search?q={query}
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
