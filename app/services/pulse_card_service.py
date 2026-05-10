@@ -15,6 +15,7 @@ from app.utils.text_utils import (
 
 @dataclass
 class CardDraft:
+    source_index: int  # index back into items list, used by aggregation_service
     quote: str
     theme: str | None
     sentiment: str
@@ -29,18 +30,43 @@ class PulseCardService:
         if not items:
             return []
 
-        # Deterministic shuffle by topic for stable UI during dev.
+        # Deterministic per-topic randomness so UI is stable across re-renders.
         rnd = random.Random(abs(hash(topic)) % (2**32))
-        pool = list(items)
-        rnd.shuffle(pool)
 
-        texts = [it.text or it.title or "" for it in pool]
-        sentiments = self.ai.sentiment.analyze([trim_text(t, max_len=240) for t in texts[: max_cards * 2]])
+        # Group items by source, shuffled within each group.
+        by_source: dict[str, list[tuple[int, NormalizedItem]]] = {}
+        for idx, it in enumerate(items):
+            by_source.setdefault(it.source, []).append((idx, it))
+        for src in by_source:
+            rnd.shuffle(by_source[src])
 
-        themes = self.ai.analyze_topic(topic, texts[:50]).themes or []
+        # Round-robin pick across sources until max_cards reached.
+        ordered_sources = sorted(by_source.keys(), key=lambda s: -len(by_source[s]))
+        picked: list[tuple[int, NormalizedItem]] = []
+        cursors = {s: 0 for s in ordered_sources}
+
+        while len(picked) < max_cards * 2:  # over-pick; quality filter may drop some
+            progressed = False
+            for src in ordered_sources:
+                if cursors[src] < len(by_source[src]):
+                    picked.append(by_source[src][cursors[src]])
+                    cursors[src] += 1
+                    progressed = True
+                    if len(picked) >= max_cards * 2:
+                        break
+            if not progressed:
+                break
+
+        if not picked:
+            return []
+
+        texts_for_ai = [(it.text or it.title or "") for _, it in picked]
+        sentiments = self.ai.sentiment.analyze([trim_text(t, max_len=240) for t in texts_for_ai])
+
+        themes = self.ai.analyze_topic(topic, texts_for_ai[:50]).themes or []
 
         drafts: list[CardDraft] = []
-        for idx, it in enumerate(pool[: max_cards * 2]):
+        for i, (orig_idx, it) in enumerate(picked):
             raw = it.text or it.title or ""
             cleaned = clean_text(raw)
             quote = best_sentence(cleaned, max_len=220) if cleaned else ""
@@ -54,17 +80,30 @@ class PulseCardService:
 
             quote = trim_text(quote, max_len=220)
 
-            s = sentiments[idx] if idx < len(sentiments) else None
+            s = sentiments[i] if i < len(sentiments) else None
             sentiment = (s.label if s else "neutral")
 
             theme = None
             if themes:
-                theme = themes[idx % len(themes)]
+                theme = themes[i % len(themes)]
 
-            display_label = f"{it.source} reaction" if it.source.lower() != "news" else "News quote"
+            src_lower = it.source.lower()
+            if src_lower == "news":
+                display_label = "News quote"
+            elif src_lower == "youtube":
+                display_label = "YouTube clip"
+            elif src_lower == "reddit":
+                display_label = "Reddit reaction"
+            elif src_lower == "bluesky":
+                display_label = "Bluesky post"
+            elif src_lower == "hackernews":
+                display_label = "HN discussion"
+            else:
+                display_label = f"{it.source} reaction"
 
             drafts.append(
                 CardDraft(
+                    source_index=orig_idx,
                     quote=quote,
                     theme=theme,
                     sentiment=sentiment,
@@ -76,4 +115,3 @@ class PulseCardService:
                 break
 
         return drafts
-

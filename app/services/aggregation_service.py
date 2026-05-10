@@ -116,10 +116,11 @@ class AggregationService:
 
         drafts = self.card_builder.build_cards(topic.query, normalized_for_cards, max_cards=settings.pulse_cards_per_topic)
 
-        # We need to attach each draft to an underlying SourceItem row.
         cards: list[PulseCard] = []
-        for idx, d in enumerate(drafts):
-            src = all_items[idx % len(all_items)]
+        for d in drafts:
+            if d.source_index < 0 or d.source_index >= len(all_items):
+                continue
+            src = all_items[d.source_index]
             cards.append(
                 PulseCard(
                     topic_id=topic.id,

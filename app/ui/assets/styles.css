@@ -168,7 +168,7 @@ button:disabled{
 }
 .sourceList{display:flex; flex-direction:column; gap:8px}
 .sourceRow{
-  display:flex; justify-content:space-between;
+  display:flex; justify-content:space-between; align-items:center;
   border:1px solid rgba(255,255,255,.12);
   background: rgba(0,0,0,.18);
   padding: 9px 10px;
@@ -176,6 +176,25 @@ button:disabled{
   color: rgba(234,240,255,.88);
   font-size: 13px;
 }
+button.sourceRow{
+  width:100%;
+  text-align:left;
+  font: inherit;
+  color: rgba(234,240,255,.88);
+  cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
+}
+button.sourceRow:hover{
+  border-color: rgba(124,92,255,.45);
+  background: rgba(124,92,255,.10);
+}
+button.sourceRow.active{
+  border-color: rgba(0,212,255,.55);
+  background: linear-gradient(180deg, rgba(124,92,255,.18), rgba(0,212,255,.10));
+  box-shadow: 0 0 0 2px rgba(0,212,255,.18) inset;
+}
+button.sourceRow.disabled{ opacity: .55 }
+button.sourceRow.disabled:hover{ border-color: rgba(255,255,255,.12); background: rgba(0,0,0,.18) }
 .cardsHeader{
   margin-top: 16px;
   display:flex;

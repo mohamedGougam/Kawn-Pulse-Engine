@@ -24,6 +24,8 @@ const els = {
 
 let currentTopicId = null;
 let currentQuery = null;
+let currentCards = [];
+let currentSourceFilter = null;
 
 function setStatus(msg, isError = false) {
   els.status.classList.remove("hidden");
@@ -59,12 +61,53 @@ function renderThemes(themes) {
 
 function renderSources(rows) {
   els.sources.innerHTML = "";
-  (rows || []).sort((a, b) => (b.item_count || 0) - (a.item_count || 0)).forEach((r) => {
-    const div = document.createElement("div");
-    div.className = "sourceRow";
-    div.innerHTML = `<span><strong>${escapeHtml(r.source)}</strong></span><span>${r.item_count} items • ${r.card_count} cards</span>`;
-    els.sources.appendChild(div);
+
+  const allRow = document.createElement("button");
+  allRow.type = "button";
+  allRow.className = "sourceRow filter" + (currentSourceFilter === null ? " active" : "");
+  allRow.dataset.source = "__all__";
+  const totalItems = (rows || []).reduce((acc, r) => acc + (r.item_count || 0), 0);
+  const totalCards = (rows || []).reduce((acc, r) => acc + (r.card_count || 0), 0);
+  allRow.innerHTML = `<span><strong>All sources</strong></span><span>${totalItems} items • ${totalCards} cards</span>`;
+  els.sources.appendChild(allRow);
+
+  (rows || []).sort((a, b) => (b.card_count || 0) - (a.card_count || 0)).forEach((r) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const isActive = currentSourceFilter && currentSourceFilter.toLowerCase() === String(r.source).toLowerCase();
+    btn.className = "sourceRow filter" + (isActive ? " active" : "") + ((r.card_count || 0) === 0 ? " disabled" : "");
+    btn.dataset.source = r.source;
+    btn.innerHTML = `<span><strong>${escapeHtml(r.source)}</strong></span><span>${r.item_count} items • ${r.card_count} cards</span>`;
+    els.sources.appendChild(btn);
   });
+
+  els.sources.querySelectorAll("button.sourceRow").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const src = btn.dataset.source;
+      if (src === "__all__") {
+        currentSourceFilter = null;
+      } else if (currentSourceFilter && currentSourceFilter.toLowerCase() === src.toLowerCase()) {
+        currentSourceFilter = null;
+      } else {
+        currentSourceFilter = src;
+      }
+      applyCardFilter();
+      // Update active state without re-fetching breakdown.
+      els.sources.querySelectorAll("button.sourceRow").forEach((b) => {
+        const s = b.dataset.source;
+        const active = (currentSourceFilter === null && s === "__all__") ||
+                       (currentSourceFilter && s.toLowerCase() === currentSourceFilter.toLowerCase());
+        b.classList.toggle("active", !!active);
+      });
+    });
+  });
+}
+
+function applyCardFilter() {
+  const filtered = currentSourceFilter
+    ? currentCards.filter((c) => String(c.source).toLowerCase() === currentSourceFilter.toLowerCase())
+    : currentCards;
+  renderCards(filtered);
 }
 
 function actionLabel(source) {
@@ -144,8 +187,11 @@ function renderSummary(resp) {
   els.negPct.textContent = `${g}%`;
 
   renderThemes(s.themes || []);
+
+  currentCards = resp.cards || [];
+  currentSourceFilter = null;
   renderSources(resp.source_breakdown || []);
-  renderCards(resp.cards || []);
+  applyCardFilter();
 
   currentTopicId = resp.topic?.id || null;
   currentQuery = resp.topic?.query || null;
