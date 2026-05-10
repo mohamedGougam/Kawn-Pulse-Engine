@@ -72,6 +72,8 @@ function actionLabel(source) {
   if (s === "youtube") return "Watch on YouTube";
   if (s === "reddit") return "Open Reddit thread";
   if (s === "news") return "Read article";
+  if (s === "bluesky") return "Open on Bluesky";
+  if (s === "hackernews") return "Open on Hacker News";
   return "Open source";
 }
 

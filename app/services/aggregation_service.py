@@ -5,6 +5,8 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.connectors.bluesky_connector import BlueskyConnector
+from app.connectors.hackernews_connector import HackerNewsConnector
 from app.connectors.mock_connector import MockConnector
 from app.connectors.news_connector import NewsRssConnector
 from app.connectors.reddit_connector import RedditConnector
@@ -34,6 +36,8 @@ class AggregationService:
         self.reddit = RedditConnector()
         self.youtube = YouTubeConnector()
         self.news = NewsRssConnector()
+        self.bluesky = BlueskyConnector()
+        self.hackernews = HackerNewsConnector()
 
     async def refresh_topic(self, session: AsyncSession, query: str) -> str:
         topic = await self.topic_repo.upsert(session, query)
@@ -45,6 +49,8 @@ class AggregationService:
         raw_items += await self._safe_fetch(self.reddit, query, per, fallback_source="Reddit")
         raw_items += await self._safe_fetch(self.youtube, query, per, fallback_source="YouTube")
         raw_items += await self._safe_fetch(self.news, query, per, fallback_source="News")
+        raw_items += await self._safe_fetch(self.bluesky, query, per, fallback_source="Bluesky")
+        raw_items += await self._safe_fetch(self.hackernews, query, per, fallback_source="HackerNews")
 
         normalized = [self.normalizer.normalize(r) for r in raw_items]
         normalized_items = [n for n in normalized if n is not None]
@@ -211,7 +217,7 @@ async def _upsert_source_breakdown(
 ) -> None:
     from sqlalchemy import select
 
-    sources = set(item_counts.keys()) | set(card_counts.keys()) | {"Reddit", "YouTube", "News"}
+    sources = set(item_counts.keys()) | set(card_counts.keys()) | {"Reddit", "YouTube", "News", "Bluesky", "HackerNews"}
     now = datetime.utcnow()
     for src in sources:
         res = await session.execute(
