@@ -67,25 +67,55 @@ function renderSources(rows) {
   });
 }
 
+function actionLabel(source) {
+  const s = String(source || "").toLowerCase();
+  if (s === "youtube") return "Watch on YouTube";
+  if (s === "reddit") return "Open Reddit thread";
+  if (s === "news") return "Read article";
+  return "Open source";
+}
+
+function hostFromUrl(url) {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch (_) {
+    return "";
+  }
+}
+
 function renderCards(cards) {
   els.cards.innerHTML = "";
   (cards || []).forEach((c) => {
     const card = document.createElement("article");
-    card.className = "card";
+    card.className = "card clickable";
+    card.setAttribute("data-href", c.source_url || "");
     const sentCls = pillClass(c.sentiment);
     const theme = c.theme ? `<span class="pill">${escapeHtml(c.theme)}</span>` : "";
     const engagement = (c.engagement_count ?? null) !== null ? ` • ${c.engagement_count}` : "";
+    const host = hostFromUrl(c.source_url || "");
+    const action = actionLabel(c.source);
     card.innerHTML = `
       <div class="quote">“${escapeHtml(c.quote)}”</div>
       <div class="meta">
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <div class="metaTags">
           <span class="pill ${sentCls}">${escapeHtml(c.source)} • ${escapeHtml(c.sentiment)}${engagement}</span>
           ${theme}
+          ${host ? `<span class="pill host">${escapeHtml(host)}</span>` : ""}
         </div>
-        <a class="link" href="${escapeAttr(c.source_url)}" target="_blank" rel="noreferrer">Open</a>
+        <a class="action" href="${escapeAttr(c.source_url)}" target="_blank" rel="noreferrer">
+          ${escapeHtml(action)} <span class="arrow">↗</span>
+        </a>
       </div>
     `;
     els.cards.appendChild(card);
+  });
+
+  els.cards.querySelectorAll(".card.clickable").forEach((el) => {
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return;
+      const href = el.getAttribute("data-href");
+      if (href) window.open(href, "_blank", "noopener,noreferrer");
+    });
   });
 }
 
