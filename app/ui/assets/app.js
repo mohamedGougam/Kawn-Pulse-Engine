@@ -322,17 +322,25 @@ function setBusy(busy) {
   els.searchBtn.textContent = busy ? "Working…" : "Search Pulse";
 }
 
+let isBusy = false;
+
 async function onSearch() {
+  if (isBusy) return;
   const q = (els.query.value || "").trim();
   if (!q) return;
   const lang = (els.language?.value || "").trim();
+
+  isBusy = true;
   clearStatus();
   setBusy(true);
   try {
+    const isRefresh = currentTopicId && currentQuery && currentQuery.toLowerCase() === q.toLowerCase();
     setStatus(
-      lang
-        ? `Searching "${q}" in ${langLabel(lang)}…`
-        : "Fetching sources, cleaning, running AI, and building pulse cards…"
+      isRefresh
+        ? `Refreshing "${q}"${lang ? ` in ${langLabel(lang)}` : ""}…`
+        : (lang
+            ? `Searching "${q}" in ${langLabel(lang)}…`
+            : "Fetching sources, cleaning, running AI, and building pulse cards…")
     );
     const resp = await apiSearch(q, lang || null);
     renderSummary(resp);
@@ -345,13 +353,17 @@ async function onSearch() {
   } catch (e) {
     setStatus(String(e?.message || e), true);
   } finally {
+    isBusy = false;
     setBusy(false);
   }
 }
 
 async function onRefresh() {
+  if (isBusy) return;
   if (!currentTopicId || !currentQuery) return;
   const lang = (els.language?.value || "").trim();
+
+  isBusy = true;
   clearStatus();
   setBusy(true);
   try {
@@ -368,6 +380,7 @@ async function onRefresh() {
   } catch (e) {
     setStatus(String(e?.message || e), true);
   } finally {
+    isBusy = false;
     setBusy(false);
   }
 }
