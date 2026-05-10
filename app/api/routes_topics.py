@@ -74,7 +74,16 @@ def _summary_schema(s: TopicSummaryDB) -> TopicSummarySchema:
 
 @router.post("/search", response_model=SearchResponse)
 async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_session_dep)) -> SearchResponse:
-    topic_id = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
+    import logging
+    import traceback
+    logger = logging.getLogger("kawn.search")
+
+    try:
+        topic_id = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
+    except Exception as e:
+        logger.exception("refresh_topic failed for query=%r language=%r", req.query, req.language)
+        raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
+
     topic = await topic_repo.get_by_id(session, topic_id)
     if not topic:
         raise HTTPException(status_code=500, detail="Topic not created")

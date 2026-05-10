@@ -41,22 +41,27 @@ _MIGRATIONS: list[tuple[str, str, str]] = [
 ]
 
 
-async def _apply_simple_migrations(conn) -> None:
+def _apply_simple_migrations_sync(sync_conn) -> None:
     for table, column, coltype in _MIGRATIONS:
         try:
-            res = await conn.execute(text(f"PRAGMA table_info({table})"))
+            res = sync_conn.exec_driver_sql(f"PRAGMA table_info({table})")
             cols = {row[1] for row in res.fetchall()}
-            if column not in cols:
-                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
         except Exception:
-            # Best-effort; if the table doesn't exist yet create_all will handle it.
+            continue
+
+        if column in cols:
+            continue
+
+        try:
+            sync_conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        except Exception:
             pass
 
 
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-        await _apply_simple_migrations(conn)
+        await conn.run_sync(_apply_simple_migrations_sync)
 
 
 @asynccontextmanager
