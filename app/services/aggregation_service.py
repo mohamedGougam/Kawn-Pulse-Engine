@@ -39,18 +39,18 @@ class AggregationService:
         self.bluesky = BlueskyConnector()
         self.hackernews = HackerNewsConnector()
 
-    async def refresh_topic(self, session: AsyncSession, query: str) -> str:
+    async def refresh_topic(self, session: AsyncSession, query: str, *, language: str | None = None) -> str:
         topic = await self.topic_repo.upsert(session, query)
 
         # Fetch from enabled connectors; fallback to mock per-connector if disabled or fails.
         raw_items = []
         per = max(5, settings.max_source_items_per_connector)
 
-        raw_items += await self._safe_fetch(self.reddit, query, per, fallback_source="Reddit")
-        raw_items += await self._safe_fetch(self.youtube, query, per, fallback_source="YouTube")
-        raw_items += await self._safe_fetch(self.news, query, per, fallback_source="News")
-        raw_items += await self._safe_fetch(self.bluesky, query, per, fallback_source="Bluesky")
-        raw_items += await self._safe_fetch(self.hackernews, query, per, fallback_source="HackerNews")
+        raw_items += await self._safe_fetch(self.reddit, query, per, fallback_source="Reddit", language=language)
+        raw_items += await self._safe_fetch(self.youtube, query, per, fallback_source="YouTube", language=language)
+        raw_items += await self._safe_fetch(self.news, query, per, fallback_source="News", language=language)
+        raw_items += await self._safe_fetch(self.bluesky, query, per, fallback_source="Bluesky", language=language)
+        raw_items += await self._safe_fetch(self.hackernews, query, per, fallback_source="HackerNews", language=language)
 
         normalized = [self.normalizer.normalize(r) for r in raw_items]
         normalized_items = [n for n in normalized if n is not None]
@@ -151,15 +151,15 @@ class AggregationService:
 
         return topic.id
 
-    async def _safe_fetch(self, connector, topic: str, limit: int, *, fallback_source: str) -> list:
+    async def _safe_fetch(self, connector, topic: str, limit: int, *, fallback_source: str, language: str | None = None) -> list:
         if settings.enable_mock_data:
-            return [i for i in (await self.mock.fetch(topic, limit=limit)) if i.source == fallback_source][:limit]
+            return [i for i in (await self.mock.fetch(topic, limit=limit, language=language)) if i.source == fallback_source][:limit]
 
         if not (await connector.enabled()):
             return []
 
         try:
-            items = await connector.fetch(topic, limit=limit)
+            items = await connector.fetch(topic, limit=limit, language=language)
             return items[:limit] if items else []
         except Exception:
             return []

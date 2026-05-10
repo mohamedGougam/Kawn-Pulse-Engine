@@ -12,7 +12,7 @@ class MockConnector:
     async def enabled(self) -> bool:
         return True
 
-    async def fetch(self, topic: str, *, limit: int) -> list[NormalizedRawItem]:
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         seed = abs(hash(topic)) % (2**32)
         rnd = random.Random(seed)
 

@@ -18,7 +18,7 @@ class HackerNewsConnector:
     async def enabled(self) -> bool:
         return not settings.enable_mock_data
 
-    async def fetch(self, topic: str, *, limit: int) -> list[NormalizedRawItem]:
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         q = urllib.parse.quote_plus(topic)
         url = f"{self.BASE_URL}?query={q}&tags=(story,comment)&hitsPerPage={min(limit, 50)}"
 

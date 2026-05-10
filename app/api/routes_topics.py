@@ -74,7 +74,7 @@ def _summary_schema(s: TopicSummaryDB) -> TopicSummarySchema:
 
 @router.post("/search", response_model=SearchResponse)
 async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_session_dep)) -> SearchResponse:
-    topic_id = await aggregation.refresh_topic(session, req.query)
+    topic_id = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
     topic = await topic_repo.get_by_id(session, topic_id)
     if not topic:
         raise HTTPException(status_code=500, detail="Topic not created")
@@ -109,7 +109,7 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
         summary=_summary_schema(summary),
         source_breakdown=breakdown,
         cards=cards,
-        meta={"refreshed": True},
+        meta={"refreshed": True, "language": (req.language or None)},
     )
 
 

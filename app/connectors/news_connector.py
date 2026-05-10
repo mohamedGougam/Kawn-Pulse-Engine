@@ -11,19 +11,42 @@ from app.utils.date_utils import parse_datetime
 from app.utils.text_utils import normalize_ws
 
 
+_LANG_REGION = {
+    "en": ("en", "US"),
+    "ar": ("ar", "SA"),
+    "fr": ("fr", "FR"),
+    "es": ("es", "ES"),
+    "de": ("de", "DE"),
+    "pt": ("pt", "BR"),
+    "it": ("it", "IT"),
+    "ru": ("ru", "RU"),
+    "he": ("he", "IL"),
+    "hi": ("hi", "IN"),
+    "ja": ("ja", "JP"),
+    "ko": ("ko", "KR"),
+    "zh": ("zh", "CN"),
+    "tr": ("tr", "TR"),
+}
+
+
 class NewsRssConnector:
     name = "News"
 
     async def enabled(self) -> bool:
         return True
 
-    async def fetch(self, topic: str, *, limit: int) -> list[NormalizedRawItem]:
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         items: list[NormalizedRawItem] = []
         feeds = settings.rss_feed_templates()
+
+        hl, gl = _LANG_REGION.get((language or "").lower(), (None, None))
 
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             for tpl in feeds:
                 url = tpl.format(query=urllib.parse.quote_plus(topic))
+                if hl and gl and "news.google.com" in url and "hl=" not in url:
+                    sep = "&" if "?" in url else "?"
+                    url = f"{url}{sep}hl={hl}&gl={gl}&ceid={gl}:{hl}"
                 try:
                     resp = await client.get(url, headers={"User-Agent": settings.reddit_user_agent})
                     resp.raise_for_status()
@@ -51,7 +74,7 @@ class NewsRssConnector:
                             text=text or None,
                             published_at=published_at,
                             engagement_count=None,
-                            language=None,
+                            language=(language or None),
                             external_id=None,
                         )
                     )

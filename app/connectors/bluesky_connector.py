@@ -18,9 +18,11 @@ class BlueskyConnector:
     async def enabled(self) -> bool:
         return not settings.enable_mock_data
 
-    async def fetch(self, topic: str, *, limit: int) -> list[NormalizedRawItem]:
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         q = urllib.parse.quote_plus(topic)
         url = f"{self.BASE_URL}?q={q}&limit={min(limit, 50)}"
+        if language:
+            url += f"&lang={urllib.parse.quote_plus(language)}"
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url, headers={"User-Agent": settings.reddit_user_agent})

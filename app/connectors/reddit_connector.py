@@ -17,7 +17,7 @@ class RedditConnector:
     async def enabled(self) -> bool:
         return settings.reddit_configured() and (not settings.enable_mock_data)
 
-    async def fetch(self, topic: str, *, limit: int) -> list[NormalizedRawItem]:
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         # Uses Reddit OAuth2 client credentials for basic search.
         # If this fails (rate-limit or invalid), the caller will fallback to mock.
         token = await _get_token()

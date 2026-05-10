@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 const els = {
   query: $("query"),
+  language: $("language"),
   searchBtn: $("searchBtn"),
   refreshBtn: $("refreshBtn"),
   status: $("status"),
@@ -148,7 +149,7 @@ function renderLanguageChips() {
     counts.set(k, (counts.get(k) || 0) + 1);
   });
 
-  if (counts.size <= 1) {
+  if (counts.size === 0) {
     els.langFilter.classList.add("hidden");
     els.langChips.innerHTML = "";
     return;
@@ -291,11 +292,13 @@ function renderSummary(resp) {
   els.topicId.textContent = currentTopicId ? `topic_id: ${currentTopicId}` : "";
 }
 
-async function apiSearch(query) {
+async function apiSearch(query, language) {
+  const body = { query };
+  if (language) body.language = language;
   const r = await fetch("/api/topics/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) {
     const t = await r.text();
@@ -322,13 +325,23 @@ function setBusy(busy) {
 async function onSearch() {
   const q = (els.query.value || "").trim();
   if (!q) return;
+  const lang = (els.language?.value || "").trim();
   clearStatus();
   setBusy(true);
   try {
-    setStatus("Fetching sources, cleaning, running AI, and building pulse cards…");
-    const resp = await apiSearch(q);
+    setStatus(
+      lang
+        ? `Searching "${q}" in ${langLabel(lang)}…`
+        : "Fetching sources, cleaning, running AI, and building pulse cards…"
+    );
+    const resp = await apiSearch(q, lang || null);
     renderSummary(resp);
-    setStatus(`Done. Showing pulse for “${q}”.`);
+    if (lang) {
+      currentLanguageFilter = lang;
+      renderLanguageChips();
+      applyCardFilter();
+    }
+    setStatus(`Done. Showing pulse for "${q}"${lang ? ` (${langLabel(lang)})` : ""}.`);
   } catch (e) {
     setStatus(String(e?.message || e), true);
   } finally {
@@ -338,13 +351,19 @@ async function onSearch() {
 
 async function onRefresh() {
   if (!currentTopicId || !currentQuery) return;
+  const lang = (els.language?.value || "").trim();
   clearStatus();
   setBusy(true);
   try {
     setStatus("Refreshing topic…");
     await apiRefresh(currentTopicId);
-    const resp = await apiSearch(currentQuery);
+    const resp = await apiSearch(currentQuery, lang || null);
     renderSummary(resp);
+    if (lang) {
+      currentLanguageFilter = lang;
+      renderLanguageChips();
+      applyCardFilter();
+    }
     setStatus("Refresh complete.");
   } catch (e) {
     setStatus(String(e?.message || e), true);

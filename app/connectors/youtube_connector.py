@@ -16,7 +16,7 @@ class YouTubeConnector:
     async def enabled(self) -> bool:
         return settings.youtube_configured() and (not settings.enable_mock_data)
 
-    async def fetch(self, topic: str, *, limit: int) -> list[NormalizedRawItem]:
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         # Uses YouTube Data API v3 search endpoint.
         if not settings.youtube_api_key:
             return []
@@ -26,6 +26,8 @@ class YouTubeConnector:
             "https://www.googleapis.com/youtube/v3/search"
             f"?part=snippet&type=video&maxResults={min(limit, 50)}&q={q}&key={settings.youtube_api_key}"
         )
+        if language:
+            url += f"&relevanceLanguage={urllib.parse.quote_plus(language)}"
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url)
