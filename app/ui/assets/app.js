@@ -19,6 +19,7 @@ const els = {
   sources: $("sources"),
   cards: $("cards"),
   topicId: $("topicId"),
+  cardsHeader: $("cardsHeader"),
 };
 
 let currentTopicId = null;
@@ -91,6 +92,7 @@ function renderCards(cards) {
 function renderSummary(resp) {
   els.summary.classList.remove("hidden");
   els.cards.classList.remove("hidden");
+  els.cardsHeader.classList.remove("hidden");
   els.refreshBtn.classList.remove("hidden");
 
   const s = resp.summary;
@@ -199,7 +201,4 @@ els.refreshBtn.addEventListener("click", onRefresh);
 els.query.addEventListener("keydown", (e) => {
   if (e.key === "Enter") onSearch();
 });
-
-// Default query for instant demo
-els.query.value = "Creed 3";
 
