@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.normalization_service import NormalizedItem
+from app.utils.lang_utils import detect_language
 from app.utils.text_utils import (
     best_sentence,
     clean_text,
@@ -45,6 +46,12 @@ class CleaningService:
                 continue
             seen.add(fp)
 
+            language = it.language
+            if not language or language == "und":
+                detected = detect_language(text)
+                if detected and detected != "und":
+                    language = detected
+
             cleaned.append(
                 NormalizedItem(
                     source=it.source,
@@ -55,7 +62,7 @@ class CleaningService:
                     title=clean_text(it.title or "") or it.title,
                     published_at=it.published_at,
                     engagement_count=it.engagement_count,
-                    language=it.language,
+                    language=language,
                     external_id=it.external_id,
                 )
             )

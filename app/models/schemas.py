@@ -55,6 +55,7 @@ class PulseCard(BaseModel):
     source: str
     sentiment: SentimentLabel
     theme: Optional[str] = None
+    language: Optional[str] = None
     source_url: str
     engagement_count: Optional[int] = None
     published_at: Optional[datetime] = None

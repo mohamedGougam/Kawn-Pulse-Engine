@@ -81,6 +81,7 @@ class PulseCard(SQLModel, table=True):
     source: str = Field(sa_column=Column(String(40)))
     theme: Optional[str] = Field(default=None, sa_column=Column(String(120)))
     sentiment: str = Field(default="neutral", sa_column=Column(String(16)))
+    language: Optional[str] = Field(default=None, sa_column=Column(String(8)))
 
     source_url: str = Field(sa_column=Column(String(1024)))
     engagement_count: Optional[int] = Field(default=None)

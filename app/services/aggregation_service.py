@@ -129,6 +129,7 @@ class AggregationService:
                     source=src.source,
                     theme=d.theme,
                     sentiment=d.sentiment,
+                    language=src.language,
                     source_url=src.source_url,
                     engagement_count=src.engagement_count,
                     published_at=src.published_at,

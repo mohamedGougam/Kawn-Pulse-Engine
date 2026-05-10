@@ -20,12 +20,39 @@ const els = {
   cards: $("cards"),
   topicId: $("topicId"),
   cardsHeader: $("cardsHeader"),
+  langFilter: $("langFilter"),
+  langChips: $("langChips"),
 };
+
+const LANG_LABELS = {
+  en: "English",
+  fr: "French",
+  ar: "Arabic",
+  es: "Spanish",
+  de: "German",
+  pt: "Portuguese",
+  it: "Italian",
+  ru: "Russian",
+  he: "Hebrew",
+  hi: "Hindi",
+  el: "Greek",
+  ja: "Japanese",
+  ko: "Korean",
+  zh: "Chinese",
+  th: "Thai",
+  und: "Unknown",
+};
+
+function langLabel(code) {
+  if (!code) return LANG_LABELS.und;
+  return LANG_LABELS[code.toLowerCase()] || code.toUpperCase();
+}
 
 let currentTopicId = null;
 let currentQuery = null;
 let currentCards = [];
 let currentSourceFilter = null;
+let currentLanguageFilter = null;
 
 function setStatus(msg, isError = false) {
   els.status.classList.remove("hidden");
@@ -104,10 +131,70 @@ function renderSources(rows) {
 }
 
 function applyCardFilter() {
-  const filtered = currentSourceFilter
-    ? currentCards.filter((c) => String(c.source).toLowerCase() === currentSourceFilter.toLowerCase())
-    : currentCards;
+  let filtered = currentCards;
+  if (currentSourceFilter) {
+    filtered = filtered.filter((c) => String(c.source).toLowerCase() === currentSourceFilter.toLowerCase());
+  }
+  if (currentLanguageFilter) {
+    filtered = filtered.filter((c) => String(c.language || "und").toLowerCase() === currentLanguageFilter.toLowerCase());
+  }
   renderCards(filtered);
+}
+
+function renderLanguageChips() {
+  const counts = new Map();
+  currentCards.forEach((c) => {
+    const k = String(c.language || "und").toLowerCase();
+    counts.set(k, (counts.get(k) || 0) + 1);
+  });
+
+  if (counts.size <= 1) {
+    els.langFilter.classList.add("hidden");
+    els.langChips.innerHTML = "";
+    return;
+  }
+  els.langFilter.classList.remove("hidden");
+
+  els.langChips.innerHTML = "";
+
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = "chip" + (currentLanguageFilter === null ? " active" : "");
+  allBtn.dataset.lang = "__all__";
+  allBtn.textContent = `All (${currentCards.length})`;
+  els.langChips.appendChild(allBtn);
+
+  Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([code, count]) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      const isActive = currentLanguageFilter && currentLanguageFilter.toLowerCase() === code;
+      btn.className = "chip" + (isActive ? " active" : "");
+      btn.dataset.lang = code;
+      btn.textContent = `${langLabel(code)} (${count})`;
+      els.langChips.appendChild(btn);
+    });
+
+  els.langChips.querySelectorAll("button.chip").forEach((b) => {
+    b.addEventListener("click", () => {
+      const lang = b.dataset.lang;
+      if (lang === "__all__") {
+        currentLanguageFilter = null;
+      } else if (currentLanguageFilter && currentLanguageFilter.toLowerCase() === lang) {
+        currentLanguageFilter = null;
+      } else {
+        currentLanguageFilter = lang;
+      }
+      applyCardFilter();
+      els.langChips.querySelectorAll("button.chip").forEach((x) => {
+        const c = x.dataset.lang;
+        const active = (currentLanguageFilter === null && c === "__all__") ||
+                       (currentLanguageFilter && c === currentLanguageFilter.toLowerCase());
+        x.classList.toggle("active", !!active);
+      });
+    });
+  });
 }
 
 function actionLabel(source) {
@@ -139,12 +226,16 @@ function renderCards(cards) {
     const engagement = (c.engagement_count ?? null) !== null ? ` • ${c.engagement_count}` : "";
     const host = hostFromUrl(c.source_url || "");
     const action = actionLabel(c.source);
+    const langPill = c.language
+      ? `<span class="pill lang">${escapeHtml(langLabel(c.language))}</span>`
+      : "";
     card.innerHTML = `
       <div class="quote">“${escapeHtml(c.quote)}”</div>
       <div class="meta">
         <div class="metaTags">
           <span class="pill ${sentCls}">${escapeHtml(c.source)} • ${escapeHtml(c.sentiment)}${engagement}</span>
           ${theme}
+          ${langPill}
           ${host ? `<span class="pill host">${escapeHtml(host)}</span>` : ""}
         </div>
         <a class="action" href="${escapeAttr(c.source_url)}" target="_blank" rel="noreferrer">
@@ -190,7 +281,9 @@ function renderSummary(resp) {
 
   currentCards = resp.cards || [];
   currentSourceFilter = null;
+  currentLanguageFilter = null;
   renderSources(resp.source_breakdown || []);
+  renderLanguageChips();
   applyCardFilter();
 
   currentTopicId = resp.topic?.id || null;

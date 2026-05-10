@@ -208,6 +208,36 @@ button.sourceRow.disabled:hover{ border-color: rgba(255,255,255,.12); background
   border: 1px solid rgba(255,255,255,.14);
   color: rgba(234,240,255,.92);
 }
+.langFilter{
+  margin-top: 10px;
+  display:flex;
+  gap: 10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.langFilter.hidden{display:none}
+.langLabel{color: var(--muted); font-size: 12.5px; letter-spacing:.3px}
+.chips{display:flex; gap:8px; flex-wrap:wrap}
+.chip{
+  font: inherit;
+  font-size: 12.5px;
+  color: rgba(234,240,255,.9);
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.22);
+  padding: 7px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
+}
+.chip:hover{
+  border-color: rgba(124,92,255,.45);
+  background: rgba(124,92,255,.10);
+}
+.chip.active{
+  border-color: rgba(0,212,255,.55);
+  background: linear-gradient(180deg, rgba(124,92,255,.20), rgba(0,212,255,.12));
+  color: #EAF0FF;
+}
 .cards{
   margin-top: 10px;
   display:grid;
@@ -241,6 +271,10 @@ button.sourceRow.disabled:hover{ border-color: rgba(255,255,255,.12); background
 .pill.host{
   color: rgba(234,240,255,.85);
   border-color: rgba(0,212,255,.35);
+}
+.pill.lang{
+  color: rgba(234,240,255,.85);
+  border-color: rgba(124,92,255,.35);
 }
 .action{
   display:inline-flex;

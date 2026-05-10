@@ -92,6 +92,7 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
             source=c.source,
             sentiment=c.sentiment,  # type: ignore[arg-type]
             theme=c.theme,
+            language=c.language,
             source_url=c.source_url,
             engagement_count=c.engagement_count,
             published_at=c.published_at,
@@ -146,6 +147,7 @@ async def get_cards(
             source=c.source,
             sentiment=c.sentiment,  # type: ignore[arg-type]
             theme=c.theme,
+            language=c.language,
             source_url=c.source_url,
             engagement_count=c.engagement_count,
             published_at=c.published_at,
