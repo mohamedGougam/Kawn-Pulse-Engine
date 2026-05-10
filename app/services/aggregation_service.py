@@ -144,17 +144,17 @@ class AggregationService:
         return topic.id
 
     async def _safe_fetch(self, connector, topic: str, limit: int, *, fallback_source: str) -> list:
-        use_mock = settings.enable_mock_data or not (await connector.enabled())
-        if use_mock:
+        if settings.enable_mock_data:
             return [i for i in (await self.mock.fetch(topic, limit=limit)) if i.source == fallback_source][:limit]
+
+        if not (await connector.enabled()):
+            return []
 
         try:
             items = await connector.fetch(topic, limit=limit)
-            if not items:
-                return [i for i in (await self.mock.fetch(topic, limit=limit)) if i.source == fallback_source][:limit]
-            return items[:limit]
+            return items[:limit] if items else []
         except Exception:
-            return [i for i in (await self.mock.fetch(topic, limit=limit)) if i.source == fallback_source][:limit]
+            return []
 
 
 async def _upsert_summary(
