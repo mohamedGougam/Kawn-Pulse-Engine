@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
@@ -33,9 +34,29 @@ AsyncSessionLocal = sessionmaker(
 )
 
 
+# Tiny migration registry: add columns to existing tables if missing.
+# Format: (table_name, column_name, column_type_sql)
+_MIGRATIONS: list[tuple[str, str, str]] = [
+    ("pulse_cards", "language", "VARCHAR(8)"),
+]
+
+
+async def _apply_simple_migrations(conn) -> None:
+    for table, column, coltype in _MIGRATIONS:
+        try:
+            res = await conn.execute(text(f"PRAGMA table_info({table})"))
+            cols = {row[1] for row in res.fetchall()}
+            if column not in cols:
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+        except Exception:
+            # Best-effort; if the table doesn't exist yet create_all will handle it.
+            pass
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await _apply_simple_migrations(conn)
 
 
 @asynccontextmanager
