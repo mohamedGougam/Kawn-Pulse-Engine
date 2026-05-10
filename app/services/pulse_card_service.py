@@ -5,7 +5,12 @@ from dataclasses import dataclass
 
 from app.services.ai_service import AIService
 from app.services.normalization_service import NormalizedItem
-from app.utils.text_utils import normalize_ws, trim_text
+from app.utils.text_utils import (
+    best_sentence,
+    clean_text,
+    is_low_quality,
+    trim_text,
+)
 
 
 @dataclass
@@ -36,8 +41,9 @@ class PulseCardService:
 
         drafts: list[CardDraft] = []
         for idx, it in enumerate(pool[: max_cards * 2]):
-            quote = normalize_ws(it.text or it.title or "")
-            if not quote:
+            raw = it.text or it.title or ""
+            quote = best_sentence(clean_text(raw), max_len=220)
+            if not quote or is_low_quality(quote):
                 continue
             quote = trim_text(quote, max_len=220)
 
