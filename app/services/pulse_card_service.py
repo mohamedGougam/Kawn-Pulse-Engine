@@ -42,9 +42,16 @@ class PulseCardService:
         drafts: list[CardDraft] = []
         for idx, it in enumerate(pool[: max_cards * 2]):
             raw = it.text or it.title or ""
-            quote = best_sentence(clean_text(raw), max_len=220)
-            if not quote or is_low_quality(quote):
-                continue
+            cleaned = clean_text(raw)
+            quote = best_sentence(cleaned, max_len=220) if cleaned else ""
+
+            if not quote or is_low_quality(quote, min_len=12, min_words=2):
+                title_clean = clean_text(it.title or "")
+                if title_clean and not is_low_quality(title_clean, min_len=12, min_words=2):
+                    quote = title_clean
+                else:
+                    continue
+
             quote = trim_text(quote, max_len=220)
 
             s = sentiments[idx] if idx < len(sentiments) else None

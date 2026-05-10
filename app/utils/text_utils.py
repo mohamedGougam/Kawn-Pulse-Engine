@@ -54,7 +54,7 @@ def _ratio_alpha(text: str) -> float:
     return letters / max(1, len(text))
 
 
-def is_low_quality(text: str, *, min_len: int = 24, min_words: int = 5) -> bool:
+def is_low_quality(text: str, *, min_len: int = 16, min_words: int = 3) -> bool:
     """Reject very short, hashtag-spam, link-heavy, or near-empty content."""
     t = normalize_ws(text)
     if len(t) < min_len:
@@ -64,10 +64,10 @@ def is_low_quality(text: str, *, min_len: int = 24, min_words: int = 5) -> bool:
     if len(words) < min_words:
         return True
 
-    if _ratio_alpha(t) < 0.55:
+    if _ratio_alpha(t) < 0.45:
         return True
 
-    if len(set(t.lower())) < 8:
+    if len(set(t.lower())) < 6:
         return True
 
     return False
@@ -82,7 +82,7 @@ def is_spam_like(text: str, *, min_len: int = 12) -> bool:
     return False
 
 
-def best_sentence(text: str, *, max_len: int = 240, min_len: int = 40) -> str:
+def best_sentence(text: str, *, max_len: int = 240, min_len: int = 30) -> str:
     """Pick the most quote-worthy sentence from a longer paragraph."""
     t = normalize_ws(text)
     if not t:
@@ -90,13 +90,13 @@ def best_sentence(text: str, *, max_len: int = 240, min_len: int = 40) -> str:
 
     parts = re.split(r"(?<=[.!?])\s+", t)
     candidates = [p.strip() for p in parts if p.strip()]
-    candidates = [p for p in candidates if len(p) >= min_len and not is_low_quality(p, min_len=min_len, min_words=6)]
+    good = [p for p in candidates if len(p) >= min_len and not is_low_quality(p, min_len=min_len, min_words=4)]
 
-    if not candidates:
-        return trim_text(t, max_len=max_len)
+    if good:
+        good.sort(key=lambda s: (abs(len(s) - 140), -len(s)))
+        return trim_text(good[0], max_len=max_len)
 
-    candidates.sort(key=lambda s: (abs(len(s) - 140), -len(s)))
-    return trim_text(candidates[0], max_len=max_len)
+    return trim_text(t, max_len=max_len)
 
 
 def trim_text(text: str, *, max_len: int = 600) -> str:

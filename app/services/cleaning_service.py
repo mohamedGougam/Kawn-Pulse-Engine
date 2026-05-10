@@ -16,18 +16,26 @@ class CleaningService:
         seen: set[str] = set()
 
         for it in items:
-            raw = it.text or it.title or ""
-            text = clean_text(raw)
+            raw_text = it.text or ""
+            raw_title = it.title or ""
+
+            text = clean_text(raw_text)
+            title_clean = clean_text(raw_title)
 
             if not text or is_low_quality(text):
-                title_clean = clean_text(it.title or "")
-                if title_clean and not is_low_quality(title_clean):
+                if title_clean and not is_low_quality(title_clean, min_len=12, min_words=2):
                     text = title_clean
                 else:
                     continue
 
             text = best_sentence(text, max_len=240)
-            if not text or is_low_quality(text):
+            if not text:
+                if title_clean and not is_low_quality(title_clean, min_len=12, min_words=2):
+                    text = title_clean
+                else:
+                    continue
+
+            if is_low_quality(text, min_len=12, min_words=2):
                 continue
 
             text = trim_text(text, max_len=240)
