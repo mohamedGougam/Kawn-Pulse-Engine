@@ -137,6 +137,19 @@ async def Getexplorefeed(session: AsyncSession = Depends(_session_dep)) -> list[
     topics_db = []
     for sub in subjects:
         topic = await topic_repo.get_by_query(session, sub)
+        if not topic:
+            try:
+                await aggregation.refresh_topic(session, sub)
+                topic = await topic_repo.get_by_query(session, sub)
+            except Exception:
+                pass
+        else:
+            count = await card_repo.count_for_topic(session, topic.id)
+            if count == 0:
+                try:
+                    await aggregation.refresh_topic(session, sub)
+                except Exception:
+                    pass
         if topic:
             topics_db.append(topic)
 
