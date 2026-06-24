@@ -122,6 +122,86 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
     )
 
 
+from pydantic import BaseModel
+
+class Bulkcardsrequest(BaseModel):
+    topic_ids: list[str]
+
+
+@router.get("/explore-feed", response_model=list[PulseCardSchema])
+async def Getexplorefeed(session: AsyncSession = Depends(_session_dep)) -> list[PulseCardSchema]:
+    from app.config import settings
+    import random
+
+    subjects = settings.Discover_subjects
+    topics_db = []
+    for sub in subjects:
+        topic = await topic_repo.get_by_query(session, sub)
+        if topic:
+            topics_db.append(topic)
+
+    if not topics_db:
+        return []
+
+    topic_map = {t.id: t.query for t in topics_db}
+    topic_ids = list(topic_map.keys())
+
+    cards_db = await card_repo.Listcardsformultipletopics(session, topic_ids, limit_per_topic=8)
+
+    results = [
+        PulseCardSchema(
+            id=c.id,
+            topic=topic_map.get(c.topic_id, "General"),
+            quote=c.quote,
+            source=c.source,
+            sentiment=c.sentiment,
+            theme=c.theme,
+            language=c.language,
+            source_url=c.source_url,
+            engagement_count=c.engagement_count,
+            published_at=c.published_at,
+            display_label=c.display_label,
+            created_at=c.created_at,
+        )
+        for c in cards_db
+    ]
+    random.shuffle(results)
+    return results
+
+
+@router.post("/bulk-cards", response_model=list[PulseCardSchema])
+async def Getbulkcards(req: Bulkcardsrequest, session: AsyncSession = Depends(_session_dep)) -> list[PulseCardSchema]:
+    if not req.topic_ids:
+        return []
+
+    topics_db = []
+    for tid in req.topic_ids:
+        topic = await topic_repo.get_by_id(session, tid)
+        if topic:
+            topics_db.append(topic)
+
+    topic_map = {t.id: t.query for t in topics_db}
+    cards_db = await card_repo.Listcardsformultipletopics(session, req.topic_ids, limit_per_topic=5)
+
+    return [
+        PulseCardSchema(
+            id=c.id,
+            topic=topic_map.get(c.topic_id, "General"),
+            quote=c.quote,
+            source=c.source,
+            sentiment=c.sentiment,
+            theme=c.theme,
+            language=c.language,
+            source_url=c.source_url,
+            engagement_count=c.engagement_count,
+            published_at=c.published_at,
+            display_label=c.display_label,
+            created_at=c.created_at,
+        )
+        for c in cards_db
+    ]
+
+
 @router.get("/trending", response_model=list[TopicSchema])
 async def trending(session: AsyncSession = Depends(_session_dep)) -> list[TopicSchema]:
     topics = await topic_repo.list_trending(session, limit=25)
@@ -175,4 +255,33 @@ async def refresh(topic_id: str, session: AsyncSession = Depends(_session_dep)) 
 
     await aggregation.refresh_topic(session, topic.query)
     return {"status": "ok", "topic_id": topic_id, "refreshed": True}
+
+
+@router.get("/cards/{card_id}", response_model=PulseCardSchema)
+async def get_single_card(
+    card_id: str,
+    session: AsyncSession = Depends(_session_dep),
+) -> PulseCardSchema:
+    card = await card_repo.get_by_id(session, card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    topic = await topic_repo.get_by_id(session, card.topic_id)
+    topic_query = topic.query if topic else "General"
+
+    return PulseCardSchema(
+        id=card.id,
+        topic=topic_query,
+        quote=card.quote,
+        source=card.source,
+        sentiment=card.sentiment,  # type: ignore[arg-type]
+        theme=card.theme,
+        language=card.language,
+        source_url=card.source_url,
+        engagement_count=card.engagement_count,
+        published_at=card.published_at,
+        display_label=card.display_label,
+        created_at=card.created_at,
+    )
+
 

@@ -30,12 +30,22 @@ class SchedulerService:
         self.scheduler = scheduler
 
     async def _refresh_trending_topics_job(self) -> None:
-        # Refresh most recently updated topics to keep pulse warm.
+        from app.config import settings
+
+        for query in settings.Discover_subjects:
+            try:
+                async with get_session() as s2:
+                    await self.aggregation.refresh_topic(s2, query)
+            except Exception:
+                continue
+
         async with get_session() as session:
             session: AsyncSession
             topics = await self.topic_repo.list_trending(session, limit=10)
 
         for t in topics:
+            if t.query in settings.Discover_subjects:
+                continue
             try:
                 async with get_session() as s2:
                     await self.aggregation.refresh_topic(s2, t.query)

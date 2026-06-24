@@ -51,3 +51,37 @@ class PulseCardRepository:
         await session.commit()
         return int(res.rowcount or 0)
 
+    async def get_by_id(self, session: AsyncSession, card_id: str) -> PulseCard | None:
+        res = await session.execute(select(PulseCard).where(PulseCard.id == card_id))
+        return res.scalar_one_or_none()
+
+    async def Listcardsformultipletopics(
+        self,
+        session: AsyncSession,
+        topic_ids: list[str],
+        *,
+        limit_per_topic: int = 5,
+    ) -> list[PulseCard]:
+        from sqlalchemy import func
+        from sqlalchemy.orm import aliased
+
+        subq = (
+            select(
+                PulseCard,
+                func.row_number().over(
+                    partition_by=PulseCard.topic_id,
+                    order_by=PulseCard.created_at.desc()
+                ).label("rn")
+            )
+            .where(PulseCard.topic_id.in_(topic_ids))
+            .subquery()
+        )
+
+        card_alias = aliased(PulseCard, subq)
+        res = await session.execute(
+            select(card_alias)
+            .where(subq.c.rn <= limit_per_topic)
+        )
+        return list(res.scalars().all())
+
+

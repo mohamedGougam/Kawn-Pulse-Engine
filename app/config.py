@@ -35,6 +35,24 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     scheduler_refresh_minutes: int = 30
 
+    Discover_subjects: list[str] = [
+        "Smart AI Assistants",
+        "Brain-Based Learning",
+        "Eco-Friendly Electronics",
+        "Flood-Proof Cities",
+        "Super-Secure Coding",
+        "High-Level Part-Time Jobs",
+        "AI Virus Tracking",
+        "Real-Life Content Verification",
+        "Human Relationship Skills",
+        "Space Junk Cleanup",
+        "Human-Like Robots (Physical AI)",
+        "6G Mobile Networks",
+        "Gene-Editing Medicine (CRISPR)",
+        "Ocean-Powered Energy",
+        "Addiction-Free Painkillers",
+    ]
+
     def rss_feed_templates(self) -> list[str]:
         return [s.strip() for s in self.news_rss_feeds.split(",") if s.strip()]
 
