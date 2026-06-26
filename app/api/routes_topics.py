@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -128,8 +128,19 @@ class Bulkcardsrequest(BaseModel):
     topic_ids: list[str]
 
 
+async def Backgroundrefresh(query: str):
+    async with get_session() as session:
+        try:
+            await aggregation.refresh_topic(session, query)
+        except Exception:
+            pass
+
+
 @router.get("/explore-feed", response_model=list[PulseCardSchema])
-async def Getexplorefeed(session: AsyncSession = Depends(_session_dep)) -> list[PulseCardSchema]:
+async def Getexplorefeed(
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(_session_dep)
+) -> list[PulseCardSchema]:
     from app.config import settings
     import random
 
@@ -139,17 +150,14 @@ async def Getexplorefeed(session: AsyncSession = Depends(_session_dep)) -> list[
         topic = await topic_repo.get_by_query(session, sub)
         if not topic:
             try:
-                await aggregation.refresh_topic(session, sub)
-                topic = await topic_repo.get_by_query(session, sub)
+                topic = await topic_repo.upsert(session, sub)
+                background_tasks.add_task(Backgroundrefresh, sub)
             except Exception:
                 pass
         else:
             count = await card_repo.count_for_topic(session, topic.id)
             if count == 0:
-                try:
-                    await aggregation.refresh_topic(session, sub)
-                except Exception:
-                    pass
+                background_tasks.add_task(Backgroundrefresh, sub)
         if topic:
             topics_db.append(topic)
 
