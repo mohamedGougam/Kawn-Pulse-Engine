@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import delete, func, select
+from datetime import datetime
+
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db_models import SourceItem
@@ -57,5 +59,18 @@ class SourceItemRepository:
 
     async def delete_for_topic(self, session: AsyncSession, topic_id: str) -> int:
         res = await session.execute(delete(SourceItem).where(SourceItem.topic_id == topic_id))
+        await session.commit()
+        return int(res.rowcount or 0)
+
+    async def delete_older_than(self, session: AsyncSession, topic_id: str, cutoff: datetime) -> int:
+  ## items are being accumulated over time, adn with the 31 dasy cap , older than 31 days need to be deleted
+        stmt = delete(SourceItem).where(
+            SourceItem.topic_id == topic_id,
+            or_(
+                and_(SourceItem.published_at.is_not(None), SourceItem.published_at < cutoff),
+                and_(SourceItem.published_at.is_(None), SourceItem.created_at < cutoff),
+            ),
+        )
+        res = await session.execute(stmt)
         await session.commit()
         return int(res.rowcount or 0)

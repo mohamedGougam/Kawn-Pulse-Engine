@@ -27,10 +27,14 @@ class Settings(BaseSettings):
     max_source_items_per_connector: int = 35
     pulse_cards_per_topic: int = 20
 
+    source_freshness_days: int = 31  ## condition for fetching only new info (31days cap) 
+
+
     # AI
     ai_sentiment_model: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
     ai_summary_model: str = "sshleifer/distilbart-cnn-12-6"
 
+   
     # Scheduler
     scheduler_enabled: bool = True
     scheduler_refresh_minutes: int = 30

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +73,12 @@ class AggregationService:
             for it in cleaned
         ]
         await self.source_repo.bulk_upsert_ignore_duplicates(session, db_items)
+
+        # Prune anything older than the freshness window so cards are only
+        # ever built from roughly "this month" of content, instead of every
+        # item ever fetched for this topic since it was first searched.
+        cutoff = datetime.utcnow() - timedelta(days=settings.source_freshness_days)
+        await self.source_repo.delete_older_than(session, topic.id, cutoff)
 
         # Reload a bounded set for AI & cards (including past items).
         all_items = await self.source_repo.list_for_topic(session, topic.id, limit=600)
@@ -244,4 +250,3 @@ async def _upsert_source_breakdown(
         )
 
     await session.commit()
-
