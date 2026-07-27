@@ -9,18 +9,21 @@ from app.config import settings
 from app.connectors.bluesky_connector import BlueskyConnector
 from app.connectors.devto_connector import DevToConnector
 from app.connectors.discourse_connector import DiscourseConnector
-from app.connectors.hackernews_connector import HackerNewsConnector
-from app.connectors.hashnode_connector import HashnodeConnector
-from app.connectors.lemmy_connector import LemmyConnector
 from app.connectors.lobsters_connector import LobstersConnector
 from app.connectors.mastodon_connector import MastodonConnector
 from app.connectors.mock_connector import MockConnector
-from app.connectors.peertube_connector import PeerTubeConnector
-from app.connectors.producthunt_connector import ProductHuntConnector
 from app.connectors.wikipedia_connector import WikipediaConnector
-from app.connectors.news_connector import NewsRssConnector
-from app.connectors.reddit_connector import RedditConnector
-from app.connectors.youtube_connector import YouTubeConnector
+
+# Disabled -- code kept below, uncomment import + __init__ line + fetch_plan
+# entry to re-enable:
+# from app.connectors.hackernews_connector import HackerNewsConnector
+# from app.connectors.hashnode_connector import HashnodeConnector
+# from app.connectors.lemmy_connector import LemmyConnector
+# from app.connectors.peertube_connector import PeerTubeConnector
+# from app.connectors.producthunt_connector import ProductHuntConnector
+# from app.connectors.news_connector import NewsRssConnector
+# from app.connectors.reddit_connector import RedditConnector
+# from app.connectors.youtube_connector import YouTubeConnector
 from app.models.db_models import PulseCard, SourceBreakdown, SourceItem, TopicSummary
 from app.repositories.pulse_card_repository import PulseCardRepository
 from app.repositories.source_item_repository import SourceItemRepository
@@ -43,20 +46,21 @@ class AggregationService:
         self.card_builder = PulseCardService(self.ai)
 
         self.mock = MockConnector()
-        self.reddit = RedditConnector()
-        self.youtube = YouTubeConnector()
-        self.news = NewsRssConnector()
         self.bluesky = BlueskyConnector()
-        self.hackernews = HackerNewsConnector()
-        self.lemmy = LemmyConnector()
         self.mastodon = MastodonConnector()
         self.devto = DevToConnector()
-        self.hashnode = HashnodeConnector()
         self.lobsters = LobstersConnector()
-        self.peertube = PeerTubeConnector()
-        self.producthunt = ProductHuntConnector()
         self.wikipedia = WikipediaConnector()
         self.discourse = DiscourseConnector()
+
+        # self.reddit = RedditConnector()
+        # self.youtube = YouTubeConnector()
+        # self.news = NewsRssConnector()
+        # self.hackernews = HackerNewsConnector()
+        # self.lemmy = LemmyConnector()
+        # self.hashnode = HashnodeConnector()
+        # self.peertube = PeerTubeConnector()
+        # self.producthunt = ProductHuntConnector()
 
     async def refresh_topic(self, session: AsyncSession, query: str, *, language: str | None = None) -> str:
         topic = await self.topic_repo.upsert(session, query)
@@ -75,20 +79,20 @@ class AggregationService:
                 return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
 
         fetch_plan = [
-            (self.reddit, "Reddit"),
-            (self.youtube, "YouTube"),
-            (self.news, "News"),
             (self.bluesky, "Bluesky"),
-            (self.hackernews, "HackerNews"),
-            (self.lemmy, "Lemmy"),
             (self.mastodon, "Mastodon"),
             (self.devto, "DevTo"),
-            (self.hashnode, "Hashnode"),
             (self.lobsters, "Lobsters"),
-            (self.peertube, "PeerTube"),
-            (self.producthunt, "ProductHunt"),
             (self.wikipedia, "Wikipedia"),
             (self.discourse, "Discourse"),
+            # (self.reddit, "Reddit"),
+            # (self.youtube, "YouTube"),
+            # (self.news, "News"),
+            # (self.hackernews, "HackerNews"),
+            # (self.lemmy, "Lemmy"),
+            # (self.hashnode, "Hashnode"),
+            # (self.peertube, "PeerTube"),
+            # (self.producthunt, "ProductHunt"),
         ]
 
         results = await asyncio.gather(

@@ -13,29 +13,20 @@ async def sources_status() -> dict:
     return {
         "enable_mock_data": settings.enable_mock_data,
         "connectors": {
-            "Reddit": {
-                "enabled": (settings.reddit_configured() and live),
-                "configured": settings.reddit_configured(),
-            },
-            "YouTube": {
-                "enabled": (settings.youtube_configured() and live),
-                "configured": settings.youtube_configured(),
-            },
-            "News": {"enabled": True, "configured": True},
             "Bluesky": {"enabled": live, "configured": True},
-            "HackerNews": {"enabled": live, "configured": True},
-            "Lemmy": {"enabled": live, "configured": True},
             "Mastodon": {"enabled": live, "configured": True},
             "DevTo": {"enabled": live, "configured": True},
-            "Hashnode": {"enabled": live, "configured": True},
             "Lobsters": {"enabled": live, "configured": True},
-            "PeerTube": {"enabled": live, "configured": True},
-            "ProductHunt": {
-                "enabled": (settings.producthunt_configured() and live),
-                "configured": settings.producthunt_configured(),
-            },
             "Wikipedia": {"enabled": live, "configured": True},
             "Discourse": {"enabled": live, "configured": True},
+            "Reddit": {"enabled": False, "configured": settings.reddit_configured()},
+            "YouTube": {"enabled": False, "configured": settings.youtube_configured()},
+            "News": {"enabled": False, "configured": True},
+            "HackerNews": {"enabled": False, "configured": True},
+            "Lemmy": {"enabled": False, "configured": True},
+            "Hashnode": {"enabled": False, "configured": True},
+            "PeerTube": {"enabled": False, "configured": True},
+            "ProductHunt": {"enabled": False, "configured": settings.producthunt_configured()},
         },
     }
 
