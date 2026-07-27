@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Pipeline sizing
     max_source_items_per_connector: int = 35
     pulse_cards_per_topic: int = 20
+    max_concurrent_connectors: int = 5
 
     source_freshness_days: int = 31  ## condition for fetching only new info (31days cap) 
 
