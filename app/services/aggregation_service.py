@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,24 +61,40 @@ class AggregationService:
     async def refresh_topic(self, session: AsyncSession, query: str, *, language: str | None = None) -> str:
         topic = await self.topic_repo.upsert(session, query)
 
-        # Fetch from enabled connectors; fallback to mock per-connector if disabled or fails.
-        raw_items = []
+        # Fetch from enabled connectors concurrently (but capped), falling back to
+        # mock per-connector if disabled or fails. These used to run one-at-a-time
+        # (14 sequential awaits), so total time was the SUM of every connector's
+        # latency. A semaphore caps how many run at once — enough to be much
+        # faster than fully sequential, without firing all 14 network requests
+        # in one burst, which can starve other apps/services on the same machine.
         per = max(5, settings.max_source_items_per_connector)
+        semaphore = asyncio.Semaphore(settings.max_concurrent_connectors)
 
-        raw_items += await self._safe_fetch(self.reddit, query, per, fallback_source="Reddit", language=language)
-        raw_items += await self._safe_fetch(self.youtube, query, per, fallback_source="YouTube", language=language)
-        raw_items += await self._safe_fetch(self.news, query, per, fallback_source="News", language=language)
-        raw_items += await self._safe_fetch(self.bluesky, query, per, fallback_source="Bluesky", language=language)
-        raw_items += await self._safe_fetch(self.hackernews, query, per, fallback_source="HackerNews", language=language)
-        raw_items += await self._safe_fetch(self.lemmy, query, per, fallback_source="Lemmy", language=language)
-        raw_items += await self._safe_fetch(self.mastodon, query, per, fallback_source="Mastodon", language=language)
-        raw_items += await self._safe_fetch(self.devto, query, per, fallback_source="DevTo", language=language)
-        raw_items += await self._safe_fetch(self.hashnode, query, per, fallback_source="Hashnode", language=language)
-        raw_items += await self._safe_fetch(self.lobsters, query, per, fallback_source="Lobsters", language=language)
-        raw_items += await self._safe_fetch(self.peertube, query, per, fallback_source="PeerTube", language=language)
-        raw_items += await self._safe_fetch(self.producthunt, query, per, fallback_source="ProductHunt", language=language)
-        raw_items += await self._safe_fetch(self.wikipedia, query, per, fallback_source="Wikipedia", language=language)
-        raw_items += await self._safe_fetch(self.discourse, query, per, fallback_source="Discourse", language=language)
+        async def _bounded_fetch(connector, fallback_source: str):
+            async with semaphore:
+                return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
+
+        fetch_plan = [
+            (self.reddit, "Reddit"),
+            (self.youtube, "YouTube"),
+            (self.news, "News"),
+            (self.bluesky, "Bluesky"),
+            (self.hackernews, "HackerNews"),
+            (self.lemmy, "Lemmy"),
+            (self.mastodon, "Mastodon"),
+            (self.devto, "DevTo"),
+            (self.hashnode, "Hashnode"),
+            (self.lobsters, "Lobsters"),
+            (self.peertube, "PeerTube"),
+            (self.producthunt, "ProductHunt"),
+            (self.wikipedia, "Wikipedia"),
+            (self.discourse, "Discourse"),
+        ]
+
+        results = await asyncio.gather(
+            *(_bounded_fetch(connector, fallback_source) for connector, fallback_source in fetch_plan)
+        )
+        raw_items: list = [item for batch in results for item in batch]
 
         normalized = [self.normalizer.normalize(r) for r in raw_items]
         normalized_items = [n for n in normalized if n is not None]
@@ -107,8 +124,15 @@ class AggregationService:
         cutoff = datetime.utcnow() - timedelta(days=settings.source_freshness_days)
         await self.source_repo.delete_older_than(session, topic.id, cutoff)
 
-        # Reload a bounded set for AI & cards (including past items).
-        all_items = await self.source_repo.list_for_topic(session, topic.id, limit=600)
+        # Reload a larger raw pool ordered by recency, then cap how many items
+        # any single source can contribute. Without this, a source that keeps
+        # producing genuinely new items on every refresh (News) keeps pushing
+        # fresh rows to the top of "most recently inserted", which over many
+        # refreshes crowds sources with a fixed, static result set (Wikipedia,
+        # Discourse, ProductHunt, etc.) out of the window entirely — even
+        # though those items are still well within the freshness window.
+        raw_pool = await self.source_repo.list_for_topic(session, topic.id, limit=2000)
+        all_items = _balance_by_source(raw_pool, per_source_cap=settings.max_source_items_per_connector)
         ai_texts = [(i.text or i.title or "") for i in all_items if (i.text or i.title)]
 
         ai_res = self.ai.analyze_topic(topic.query, ai_texts)
@@ -196,6 +220,24 @@ class AggregationService:
             return items[:limit] if items else []
         except Exception:
             return []
+
+
+def _balance_by_source(items: list, *, per_source_cap: int) -> list:
+    """Cap how many items any single source contributes, keeping each
+    source's most recent items, then merge back together sorted by recency.
+    Prevents a high-volume source (e.g. News, which finds new unique items
+    on every refresh) from crowding lower-volume sources out entirely.
+    """
+    by_source: dict[str, list] = {}
+    for it in items:
+        by_source.setdefault(it.source, []).append(it)
+
+    capped: list = []
+    for src_items in by_source.values():
+        capped.extend(src_items[:per_source_cap])
+
+    capped.sort(key=lambda i: i.created_at, reverse=True)
+    return capped
 
 
 async def _upsert_summary(
