@@ -205,6 +205,15 @@ function actionLabel(source) {
   if (s === "news") return "Read article";
   if (s === "bluesky") return "Open on Bluesky";
   if (s === "hackernews") return "Open on Hacker News";
+  if (s === "lemmy") return "Open on Lemmy";
+  if (s === "mastodon") return "Open on Mastodon";
+  if (s === "devto") return "Read on DEV";
+  if (s === "hashnode") return "Read on Hashnode";
+  if (s === "lobsters") return "Open on Lobsters";
+  if (s === "peertube") return "Watch on PeerTube";
+  if (s === "producthunt") return "View on Product Hunt";
+  if (s === "wikipedia") return "Open Wikipedia talk page";
+  if (s === "discourse") return "Open forum thread";
   return "Open source";
 }
 

@@ -31,8 +31,8 @@ async def sources_status() -> dict:
             "Lobsters": {"enabled": live, "configured": True},
             "PeerTube": {"enabled": live, "configured": True},
             "ProductHunt": {
-                "enabled": (bool(settings.producthunt_access_token) and live),
-                "configured": bool(settings.producthunt_access_token),
+                "enabled": (settings.producthunt_configured() and live),
+                "configured": settings.producthunt_configured(),
             },
             "Wikipedia": {"enabled": live, "configured": True},
             "Discourse": {"enabled": live, "configured": True},

@@ -21,6 +21,12 @@ class Settings(BaseSettings):
 
     news_rss_feeds: str = "https://news.google.com/rss/search?q={query}"
 
+    producthunt_access_token: str | None = None
+    discourse_instance_url: str = "https://meta.discourse.org"
+    peertube_instance_url: str = "https://framatube.org"
+    lemmy_instance_url: str = "https://lemmy.world"
+    mastodon_instance_url: str = "https://mastodon.social"
+
     enable_mock_data: bool = True
 
     # Pipeline sizing
@@ -65,6 +71,9 @@ class Settings(BaseSettings):
 
     def youtube_configured(self) -> bool:
         return bool(self.youtube_api_key)
+
+    def producthunt_configured(self) -> bool:
+        return bool(self.producthunt_access_token)
 
 
 settings = Settings()
