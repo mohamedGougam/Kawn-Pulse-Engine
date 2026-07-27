@@ -24,6 +24,18 @@ async def sources_status() -> dict:
             "News": {"enabled": True, "configured": True},
             "Bluesky": {"enabled": live, "configured": True},
             "HackerNews": {"enabled": live, "configured": True},
+            "Lemmy": {"enabled": live, "configured": True},
+            "Mastodon": {"enabled": live, "configured": True},
+            "DevTo": {"enabled": live, "configured": True},
+            "Hashnode": {"enabled": live, "configured": True},
+            "Lobsters": {"enabled": live, "configured": True},
+            "PeerTube": {"enabled": live, "configured": True},
+            "ProductHunt": {
+                "enabled": (bool(settings.producthunt_access_token) and live),
+                "configured": bool(settings.producthunt_access_token),
+            },
+            "Wikipedia": {"enabled": live, "configured": True},
+            "Discourse": {"enabled": live, "configured": True},
         },
     }
 

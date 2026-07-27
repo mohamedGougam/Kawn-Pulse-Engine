@@ -6,8 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.connectors.bluesky_connector import BlueskyConnector
+from app.connectors.devto_connector import DevToConnector
+from app.connectors.discourse_connector import DiscourseConnector
 from app.connectors.hackernews_connector import HackerNewsConnector
+from app.connectors.hashnode_connector import HashnodeConnector
+from app.connectors.lemmy_connector import LemmyConnector
+from app.connectors.lobsters_connector import LobstersConnector
+from app.connectors.mastodon_connector import MastodonConnector
 from app.connectors.mock_connector import MockConnector
+from app.connectors.peertube_connector import PeerTubeConnector
+from app.connectors.producthunt_connector import ProductHuntConnector
+from app.connectors.wikipedia_connector import WikipediaConnector
 from app.connectors.news_connector import NewsRssConnector
 from app.connectors.reddit_connector import RedditConnector
 from app.connectors.youtube_connector import YouTubeConnector
@@ -38,6 +47,15 @@ class AggregationService:
         self.news = NewsRssConnector()
         self.bluesky = BlueskyConnector()
         self.hackernews = HackerNewsConnector()
+        self.lemmy = LemmyConnector()
+        self.mastodon = MastodonConnector()
+        self.devto = DevToConnector()
+        self.hashnode = HashnodeConnector()
+        self.lobsters = LobstersConnector()
+        self.peertube = PeerTubeConnector()
+        self.producthunt = ProductHuntConnector()
+        self.wikipedia = WikipediaConnector()
+        self.discourse = DiscourseConnector()
 
     async def refresh_topic(self, session: AsyncSession, query: str, *, language: str | None = None) -> str:
         topic = await self.topic_repo.upsert(session, query)
@@ -51,6 +69,15 @@ class AggregationService:
         raw_items += await self._safe_fetch(self.news, query, per, fallback_source="News", language=language)
         raw_items += await self._safe_fetch(self.bluesky, query, per, fallback_source="Bluesky", language=language)
         raw_items += await self._safe_fetch(self.hackernews, query, per, fallback_source="HackerNews", language=language)
+        raw_items += await self._safe_fetch(self.lemmy, query, per, fallback_source="Lemmy", language=language)
+        raw_items += await self._safe_fetch(self.mastodon, query, per, fallback_source="Mastodon", language=language)
+        raw_items += await self._safe_fetch(self.devto, query, per, fallback_source="DevTo", language=language)
+        raw_items += await self._safe_fetch(self.hashnode, query, per, fallback_source="Hashnode", language=language)
+        raw_items += await self._safe_fetch(self.lobsters, query, per, fallback_source="Lobsters", language=language)
+        raw_items += await self._safe_fetch(self.peertube, query, per, fallback_source="PeerTube", language=language)
+        raw_items += await self._safe_fetch(self.producthunt, query, per, fallback_source="ProductHunt", language=language)
+        raw_items += await self._safe_fetch(self.wikipedia, query, per, fallback_source="Wikipedia", language=language)
+        raw_items += await self._safe_fetch(self.discourse, query, per, fallback_source="Discourse", language=language)
 
         normalized = [self.normalizer.normalize(r) for r in raw_items]
         normalized_items = [n for n in normalized if n is not None]
@@ -225,7 +252,10 @@ async def _upsert_source_breakdown(
 ) -> None:
     from sqlalchemy import select
 
-    sources = set(item_counts.keys()) | set(card_counts.keys()) | {"Reddit", "YouTube", "News", "Bluesky", "HackerNews"}
+    sources = set(item_counts.keys()) | set(card_counts.keys()) | {
+        "Reddit", "YouTube", "News", "Bluesky", "HackerNews", "Lemmy", "Mastodon",
+        "DevTo", "Hashnode", "Lobsters", "PeerTube", "ProductHunt", "Wikipedia", "Discourse",
+    }
     now = datetime.utcnow()
     for src in sources:
         res = await session.execute(
