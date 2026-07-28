@@ -13,18 +13,21 @@ async def sources_status() -> dict:
     return {
         "enable_mock_data": settings.enable_mock_data,
         "connectors": {
+            # -- fast tier --
             "Bluesky": {"enabled": live, "configured": True},
+            "Reddit": {"enabled": live and settings.reddit_configured(), "configured": settings.reddit_configured()},
             "Mastodon": {"enabled": live, "configured": True},
-            "DevTo": {"enabled": live, "configured": True},
-            "Lobsters": {"enabled": live, "configured": True},
+            "YouTube": {"enabled": live and settings.youtube_configured(), "configured": settings.youtube_configured()},
+            "HackerNews": {"enabled": live, "configured": True},
             "Wikipedia": {"enabled": live, "configured": True},
-            "Discourse": {"enabled": live, "configured": True},
-            "Reddit": {"enabled": False, "configured": settings.reddit_configured()},
-            "YouTube": {"enabled": False, "configured": settings.youtube_configured()},
-            "News": {"enabled": False, "configured": True},
-            "HackerNews": {"enabled": False, "configured": True},
+            # -- heavy tier --
+            "DevTo": {"enabled": live, "configured": True},
+            "News": {"enabled": live, "configured": True},
+            "Hashnode": {"enabled": live, "configured": True},
+            # -- not on the requested lists, disabled --
+            "Discourse": {"enabled": False, "configured": True},
+            "Lobsters": {"enabled": False, "configured": True},
             "Lemmy": {"enabled": False, "configured": True},
-            "Hashnode": {"enabled": False, "configured": True},
             "PeerTube": {"enabled": False, "configured": True},
             "ProductHunt": {"enabled": False, "configured": settings.producthunt_configured()},
         },

@@ -10,16 +10,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.connectors.bluesky_connector import BlueskyConnector
 from app.connectors.devto_connector import DevToConnector
-from app.connectors.discourse_connector import DiscourseConnector
-from app.connectors.lobsters_connector import LobstersConnector
+from app.connectors.hackernews_connector import HackerNewsConnector
+from app.connectors.hashnode_connector import HashnodeConnector
 from app.connectors.mastodon_connector import MastodonConnector
 from app.connectors.mock_connector import MockConnector
+from app.connectors.news_connector import NewsRssConnector
+from app.connectors.reddit_connector import RedditConnector
 from app.connectors.wikipedia_connector import WikipediaConnector
+from app.connectors.youtube_connector import YouTubeConnector
 
+# Active set matches the fast/heavy connector lists as specified:
+#   fast:  Bluesky, Reddit, Mastodon, YouTube, HackerNews, Wikipedia
+#          (X/Twitter has no connector -- no free streaming API available)
+#   heavy: Dev.to, News (RSS -- Google News/Bing/Al Jazeera feed templates
+#          via NEWS_RSS_FEEDS), Hashnode
+#          (LinkedIn has no connector -- no free API available)
+#
 # Disabled -- code kept below, uncomment import + __init__ line + fetch_plan
-# entry to re-enable:
-# from app.connectors.hackernews_connector import HackerNewsConnector
-# from app.connectors.hashnode_connector import HashnodeConnector
+# entry to re-enable (not on either requested list, kept as optional extras):
+# from app.connectors.discourse_connector import DiscourseConnector
+# from app.connectors.lobsters_connector import LobstersConnector
 # from app.connectors.lemmy_connector import LemmyConnector
 # from app.connectors.peertube_connector import PeerTubeConnector
 # from app.connectors.producthunt_connector import ProductHuntConnector
@@ -139,16 +149,18 @@ class AggregationService:
         self.bluesky = BlueskyConnector()
         self.mastodon = MastodonConnector()
         self.devto = DevToConnector()
-        self.lobsters = LobstersConnector()
         self.wikipedia = WikipediaConnector()
-        self.discourse = DiscourseConnector()
+        self.reddit = RedditConnector()
+        self.youtube = YouTubeConnector()
+        self.news = NewsRssConnector()
+        self.hackernews = HackerNewsConnector()
+        self.hashnode = HashnodeConnector()
 
-        # self.reddit = RedditConnector()
-        # self.youtube = YouTubeConnector()
-        # self.news = NewsRssConnector()
-        # self.hackernews = HackerNewsConnector()
+        # Not on either requested connector list -- kept disabled, code
+        # available if you want to re-add them as extras later.
+        # self.discourse = DiscourseConnector()
+        # self.lobsters = LobstersConnector()
         # self.lemmy = LemmyConnector()
-        # self.hashnode = HashnodeConnector()
         # self.peertube = PeerTubeConnector()
         # self.producthunt = ProductHuntConnector()
 
@@ -158,18 +170,20 @@ class AggregationService:
         # connector objects, but keeping one list means re-enabling a
         # connector here automatically covers both call sites).
         self.fetch_plan = [
+            # -- fast tier --
             (self.bluesky, "Bluesky"),
+            (self.reddit, "Reddit"),
             (self.mastodon, "Mastodon"),
-            (self.devto, "DevTo"),
-            (self.lobsters, "Lobsters"),
+            (self.youtube, "YouTube"),
+            (self.hackernews, "HackerNews"),
             (self.wikipedia, "Wikipedia"),
-            (self.discourse, "Discourse"),
-            # (self.reddit, "Reddit"),
-            # (self.youtube, "YouTube"),
-            # (self.news, "News"),
-            # (self.hackernews, "HackerNews"),
+            # -- heavy tier --
+            (self.devto, "DevTo"),
+            (self.news, "News"),
+            (self.hashnode, "Hashnode"),
+            # (self.discourse, "Discourse"),
+            # (self.lobsters, "Lobsters"),
             # (self.lemmy, "Lemmy"),
-            # (self.hashnode, "Hashnode"),
             # (self.peertube, "PeerTube"),
             # (self.producthunt, "ProductHunt"),
         ]

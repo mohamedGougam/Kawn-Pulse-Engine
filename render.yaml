@@ -8,8 +8,14 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      # Was "true" -- that made _safe_fetch() serve only mock data in
+      # production regardless of what credentials were set below. Real
+      # connectors (Bluesky/Mastodon/Wikipedia/HackerNews/DevTo/News/
+      # Hashnode need no keys; Reddit/YouTube need the creds below) are
+      # now wired into fetch_plan, so this needs to be false for them to
+      # actually run.
       - key: ENABLE_MOCK_DATA
-        value: "true"
+        value: "false"
       # Free web services have no persistent disk — /tmp is wiped on every
       # restart/redeploy/idle-spindown. Point this at a Neon (or similar)
       # free Postgres instead: postgresql+asyncpg://user:pass@host/dbname

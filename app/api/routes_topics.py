@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,10 +81,12 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
     logger = logging.getLogger("kawn.search")
 
     try:
-        topic_id = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
+        refresh_result = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
     except Exception as e:
         logger.exception("refresh_topic failed for query=%r language=%r", req.query, req.language)
         raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
+
+    topic_id = refresh_result.topic_id
 
     topic = await topic_repo.get_by_id(session, topic_id)
     if not topic:
@@ -118,7 +122,14 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
         summary=_summary_schema(summary),
         source_breakdown=breakdown,
         cards=cards,
-        meta={"refreshed": True, "language": (req.language or None)},
+        meta={
+            "refreshed": True,
+            "language": (req.language or None),
+            "partial": refresh_result.partial,
+            "missing_sources": refresh_result.missing_sources,
+            "cached_sources": refresh_result.cached_sources,
+            "source_freshness": refresh_result.source_freshness,
+        },
     )
 
 
@@ -146,18 +157,21 @@ async def Getexplorefeed(
 
     subjects = settings.Discover_subjects
     topics_db = []
+    cold_start_subjects: list[str] = []
     for sub in subjects:
         topic = await topic_repo.get_by_query(session, sub)
         if not topic:
             try:
                 topic = await topic_repo.upsert(session, sub)
                 background_tasks.add_task(Backgroundrefresh, sub)
+                cold_start_subjects.append(sub)
             except Exception:
                 pass
         else:
             count = await card_repo.count_for_topic(session, topic.id)
             if count == 0:
                 background_tasks.add_task(Backgroundrefresh, sub)
+                cold_start_subjects.append(sub)
         if topic:
             topics_db.append(topic)
 
@@ -168,6 +182,37 @@ async def Getexplorefeed(
     topic_ids = list(topic_map.keys())
 
     cards_db = await card_repo.Listcardsformultipletopics(session, topic_ids, limit_per_topic=8)
+
+    # Cold-start instant paint: for any Discover subject with 0 DB cards
+    # right now (background refresh just kicked off above but hasn't
+    # landed yet), pull whatever's already sitting in the R2 heavy-fetch
+    # cache so the feed isn't empty for that subject on first load. These
+    # are cheap, AI-free preview cards — real cards replace them once the
+    # background refresh above completes.
+    preview_results: list[PulseCardSchema] = []
+    for sub in cold_start_subjects:
+        try:
+            previews = await aggregation.build_cache_preview_cards(sub, max_cards=8)
+        except Exception:
+            previews = []
+        for p in previews:
+            preview_results.append(
+                PulseCardSchema(
+                    id=f"preview:{p.source}:{p.source_url}",
+                    topic=p.topic,
+                    quote=p.quote,
+                    source=p.source,
+                    sentiment="neutral",
+                    theme=None,
+                    language=p.language,
+                    source_url=p.source_url,
+                    engagement_count=p.engagement_count,
+                    published_at=p.published_at,
+                    display_label=p.display_label,
+                    created_at=p.published_at or datetime.utcnow(),
+                    is_preview=True,
+                )
+            )
 
     results = [
         PulseCardSchema(
@@ -186,6 +231,7 @@ async def Getexplorefeed(
         )
         for c in cards_db
     ]
+    results.extend(preview_results)
     random.shuffle(results)
     return results
 
