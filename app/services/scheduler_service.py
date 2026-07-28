@@ -106,11 +106,11 @@ class SchedulerService:
         )
         batch = ranked[: settings.background_batch_size]
 
-        # Independent from AggregationService's per-topic connector
-        # semaphore (max_concurrent_connectors) — this one caps how many
-        # *topics* the background worker refreshes at once, so a burst of
-        # background work can't starve connector slots away from a live
-        # user search happening at the same time.
+        # A single topic refresh fires every connector concurrently (no
+        # per-connector cap any more), so this semaphore caps how many
+        # *topics* the background worker refreshes at once — otherwise a
+        # burst of background work could pile a lot of simultaneous
+        # connections on top of whatever a live user search is doing.
         semaphore = asyncio.Semaphore(settings.background_worker_concurrency)
 
         async def _refresh_one(topic: Topic) -> None:

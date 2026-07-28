@@ -35,18 +35,29 @@ class Settings(BaseSettings):
     # Fetch timeout budget
     # Per-connector hard timeout — a single slow source can no longer stall
     # the whole refresh past this, no matter what its own http client timeout is.
-    connector_timeout_seconds: float = 5.0
+    # Shortened from 5.0: the fast-fetch wave no longer queues connectors
+    # behind a concurrency cap (all of fetch_plan fires at once now), so a
+    # tighter per-connector timeout is what actually bounds total search
+    # latency — and it means a stuck source gets replaced by its cache
+    # fallback sooner instead of eating the whole budget.
+    connector_timeout_seconds: float = 3.0
     # Overall budget for a live/search-triggered refresh. Once this elapses,
     # aggregation returns whatever connectors have finished instead of waiting
-    # for stragglers. Kept > connector_timeout_seconds to allow at least two
-    # waves through the concurrency-3 semaphore.
-    search_fetch_budget_seconds: float = 12.0
+    # for stragglers. With every connector now firing in a single wave
+    # (no more queueing through a concurrency-3 semaphore), this no longer
+    # needs slack for multiple waves — set to roughly double
+    # connector_timeout_seconds as a backstop for event-loop scheduling
+    # delays, not because any connector should legitimately take this long.
+    search_fetch_budget_seconds: float = 6.0
 
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only
     # needs to be generous enough that a slow R2 read doesn't itself become
     # the bottleneck — it does not add to the live-fetch budget above.
-    heavy_cache_read_timeout_seconds: float = 4.0
+    # Shortened from 4.0 so a slow cache read doesn't sit around after the
+    # (now-faster) live fetch has already come back — a fast miss here just
+    # means that source shows up in missing_sources instead of cached_sources.
+    heavy_cache_read_timeout_seconds: float = 2.0
 
     # Shared secret for the external cron heartbeat (cron-job.org etc.) that
     # wakes the free-tier dyno and drives scheduled refreshes, since an
@@ -73,14 +84,12 @@ class Settings(BaseSettings):
     # Pipeline sizing
     max_source_items_per_connector: int = 35
     pulse_cards_per_topic: int = 20
-    max_concurrent_connectors: int = 3
 
-    # Background worker (scheduler / cron-tick) tuning — deliberately
-    # separate from max_concurrent_connectors above. That semaphore caps how
-    # many *connectors* run at once for a single topic's refresh; these cap
-    # how many *topics* the background worker refreshes at once and per
-    # tick. Reusing one semaphore for both would mean a burst of background
-    # topic refreshes could starve a live user search of connector slots.
+    # Background worker (scheduler / cron-tick) tuning. A single topic
+    # refresh now fires every connector concurrently (no per-connector cap
+    # any more — see AggregationService.refresh_topic), so this semaphore is
+    # what keeps a burst of background topic refreshes from piling on top of
+    # a live user search's own connector burst at the same time.
     background_worker_concurrency: int = 2
     # How many topics get refreshed per scheduler/cron-tick pass, taken from
     # the top of the priority-scored candidate list (see

@@ -203,25 +203,26 @@ class AggregationService:
             # TopicRepository.record_search.
             await self.topic_repo.record_search(session, topic)
 
-        # Fetch from enabled connectors concurrently (but capped), falling back to
-        # mock per-connector if disabled or fails. These used to run one-at-a-time
-        # (14 sequential awaits), so total time was the SUM of every connector's
-        # latency. A semaphore caps how many run at once — enough to be much
-        # faster than fully sequential, without firing all 14 network requests
-        # in one burst, which can starve other apps/services on the same machine.
+        # Fetch from enabled connectors fully concurrently — no semaphore cap.
+        # These used to be capped at max_concurrent_connectors (3) at a time,
+        # so with 9 connectors in fetch_plan a search could spend two extra
+        # queueing waves behind that cap before ever reaching the slowest
+        # source. Firing every connector at once instead means every source
+        # gets a chance to answer within the same window, which is what
+        # actually gives a search request variety across sources — the
+        # trade-off is a bigger simultaneous request burst, offset below by
+        # a shorter per-connector timeout so a stalled connector can't hold
+        # up the batch for long.
         per = max(5, settings.max_source_items_per_connector)
-        semaphore = asyncio.Semaphore(settings.max_concurrent_connectors)
 
         async def _bounded_fetch(connector, fallback_source: str):
-            async with semaphore:
-                return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
+            return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
 
         # Overall budget for this refresh's live-fetch stage. asyncio.gather
         # itself has no timeout, so without this a single connector whose own
         # http client is misbehaving (or the network being flaky) can stall
-        # the whole search past _safe_fetch's per-connector timeout — e.g. if
-        # it's queued behind the semaphore waiting for a slot. wait_for here
-        # is a backstop on top of the per-connector timeout below, not a
+        # the whole search past _safe_fetch's per-connector timeout. wait_for
+        # here is a backstop on top of the per-connector timeout below, not a
         # replacement for it.
 
         fetch_plan = self.fetch_plan
