@@ -20,6 +20,15 @@ class Topic(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=False)))
     updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column=Column(DateTime(timezone=False)))
 
+    # How many times a real user search has hit this topic (via POST
+    # /api/topics/search or the manual /refresh action), and when the most
+    # recent one happened. Distinct from `updated_at`, which is bumped by
+    # *any* refresh including background-worker passes — these two fields
+    # are the actual "someone cares about this topic" signal the background
+    # worker's priority queue scores against.
+    search_count: int = Field(default=0)
+    last_searched_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=False)))
+
 
 class SourceItem(SQLModel, table=True):
     __tablename__ = "source_items"

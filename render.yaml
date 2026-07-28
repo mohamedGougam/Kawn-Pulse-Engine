@@ -10,10 +10,17 @@ services:
         value: 3.11.9
       - key: ENABLE_MOCK_DATA
         value: "true"
+      # Free web services have no persistent disk — /tmp is wiped on every
+      # restart/redeploy/idle-spindown. Point this at a Neon (or similar)
+      # free Postgres instead: postgresql+asyncpg://user:pass@host/dbname
+      # (Render's own free Postgres expires 30 days after creation — Neon
+      # doesn't). Set the real value as a dashboard secret, not here.
       - key: DATABASE_URL
-        value: sqlite:////tmp/kawn_pulse.db
+        sync: false
+      # Re-enabled: covers refreshes while the dyno is awake. It cannot fire
+      # while asleep though — see the cron-tick endpoint below for that gap.
       - key: SCHEDULER_ENABLED
-        value: "false"
+        value: "true"
       - key: REDDIT_USER_AGENT
         value: KawnPulseEngine/1.0
       - key: NEWS_RSS_FEEDS
@@ -23,4 +30,20 @@ services:
       - key: REDDIT_CLIENT_SECRET
         sync: false
       - key: YOUTUBE_API_KEY
+        sync: false
+      # Cloudflare R2 — heavy-fetch JSON cache (/sources/<source>/<topic>.json)
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        value: kawn-pulse-cache
+      # Shared secret for POST /internal/cron-tick. Point a free pinger
+      # (e.g. cron-job.org) at that endpoint every 10 min with header
+      # X-Cron-Secret: <this value> — it wakes the sleeping dyno *and*
+      # drives a refresh pass, since the in-process APScheduler can't run
+      # while the instance is spun down.
+      - key: CRON_HEARTBEAT_SECRET
         sync: false

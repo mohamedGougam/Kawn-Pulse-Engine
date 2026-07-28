@@ -116,6 +116,13 @@ button:disabled{
   padding: 12px 14px;
   color: var(--muted);
 }
+.dataNote{
+  border-color: rgba(255,159,10,.35);
+  background: rgba(255,159,10,.08);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.dataNote strong{color: var(--text, #fff)}
 .grid{
   margin-top:14px;
   display:grid;

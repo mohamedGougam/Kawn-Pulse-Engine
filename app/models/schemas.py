@@ -61,6 +61,10 @@ class PulseCard(BaseModel):
     published_at: Optional[datetime] = None
     display_label: str
     created_at: datetime
+    # True only for explorer's cold-start preview cards (built straight
+    # from cache, no AI) — see AggregationService.build_cache_preview_cards.
+    # Absent/False for every normal DB-backed card.
+    is_preview: bool = False
 
 
 class TopicSummary(BaseModel):

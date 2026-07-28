@@ -51,7 +51,7 @@ class AIService:
         sentiment_score = round(score_acc[sentiment_label] / denom, 4)
 
         summary = self.summarizer.summarize(topic, texts[:40])
-        themes = _extract_themes_mock(topic, texts)
+        themes = self.extract_themes(topic)
 
         return TopicAIResult(
             summary_text=summary,
@@ -60,6 +60,16 @@ class AIService:
             breakdown=breakdown,
             themes=themes,
         )
+
+    def extract_themes(self, topic: str) -> list[str]:
+        """Themes are derived purely from the topic string (deterministic
+        per-topic seed), not from the item texts — this is intentionally
+        cheap and doesn't touch the sentiment/summarization pipelines, so
+        callers that only need themes (e.g. card building) should call this
+        directly instead of the full analyze_topic(), which would otherwise
+        re-run a full sentiment + summarization pass just to throw away
+        everything except this field."""
+        return _extract_themes_mock(topic)
 
     def dumps_themes(self, themes: list[str]) -> str:
         return json.dumps(themes, ensure_ascii=False)
@@ -74,7 +84,7 @@ class AIService:
         return []
 
 
-def _extract_themes_mock(topic: str, texts: list[str]) -> list[str]:
+def _extract_themes_mock(topic: str) -> list[str]:
     seed = abs(hash(topic)) % (2**32)
     rnd = random.Random(seed)
     candidates = [

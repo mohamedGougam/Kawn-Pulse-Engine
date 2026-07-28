@@ -6,6 +6,7 @@ const els = {
   searchBtn: $("searchBtn"),
   refreshBtn: $("refreshBtn"),
   status: $("status"),
+  dataNote: $("dataNote"),
   summary: $("summary"),
   summaryText: $("summaryText"),
   sentLabel: $("sentLabel"),
@@ -64,6 +65,8 @@ function setStatus(msg, isError = false) {
 function clearStatus() {
   els.status.classList.add("hidden");
   els.status.textContent = "";
+  els.dataNote.classList.add("hidden");
+  els.dataNote.innerHTML = "";
 }
 
 function pct(x) {
@@ -198,6 +201,46 @@ function renderLanguageChips() {
   });
 }
 
+function timeAgo(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function renderDataNote(meta) {
+  const missing = (meta && meta.missing_sources) || [];
+  const cached = (meta && meta.cached_sources) || [];
+  const freshness = (meta && meta.source_freshness) || {};
+
+  if (missing.length === 0 && cached.length === 0) {
+    els.dataNote.classList.add("hidden");
+    els.dataNote.innerHTML = "";
+    return;
+  }
+
+  const parts = [];
+  if (cached.length > 0) {
+    const withAge = cached
+      .map((s) => {
+        const age = timeAgo(freshness[s]);
+        return age ? `${escapeHtml(s)} (${age})` : escapeHtml(s);
+      })
+      .join(", ");
+    parts.push(`<strong>Some results may be a little stale:</strong> ${withAge}.`);
+  }
+  if (missing.length > 0) {
+    parts.push(`<strong>No data available right now for:</strong> ${missing.map(escapeHtml).join(", ")}.`);
+  }
+
+  els.dataNote.innerHTML = parts.join(" ");
+  els.dataNote.classList.remove("hidden");
+}
+
 function actionLabel(source) {
   const s = String(source || "").toLowerCase();
   if (s === "youtube") return "Watch on YouTube";
@@ -295,6 +338,7 @@ function renderSummary(resp) {
   renderSources(resp.source_breakdown || []);
   renderLanguageChips();
   applyCardFilter();
+  renderDataNote(resp.meta || {});
 
   currentTopicId = resp.topic?.id || null;
   currentQuery = resp.topic?.query || null;

@@ -22,6 +22,22 @@ class CardDraft:
     display_label: str
 
 
+def display_label_for_source(source: str) -> str:
+    src_lower = source.lower()
+    if src_lower == "news":
+        return "News quote"
+    elif src_lower == "youtube":
+        return "YouTube clip"
+    elif src_lower == "reddit":
+        return "Reddit reaction"
+    elif src_lower == "bluesky":
+        return "Bluesky post"
+    elif src_lower == "hackernews":
+        return "HN discussion"
+    else:
+        return f"{source} reaction"
+
+
 class PulseCardService:
     def __init__(self, ai: AIService) -> None:
         self.ai = ai
@@ -63,7 +79,7 @@ class PulseCardService:
         texts_for_ai = [(it.text or it.title or "") for _, it in picked]
         sentiments = self.ai.sentiment.analyze([trim_text(t, max_len=240) for t in texts_for_ai])
 
-        themes = self.ai.analyze_topic(topic, texts_for_ai[:50]).themes or []
+        themes = self.ai.extract_themes(topic) or []
 
         drafts: list[CardDraft] = []
         for i, (orig_idx, it) in enumerate(picked):
@@ -87,19 +103,7 @@ class PulseCardService:
             if themes:
                 theme = themes[i % len(themes)]
 
-            src_lower = it.source.lower()
-            if src_lower == "news":
-                display_label = "News quote"
-            elif src_lower == "youtube":
-                display_label = "YouTube clip"
-            elif src_lower == "reddit":
-                display_label = "Reddit reaction"
-            elif src_lower == "bluesky":
-                display_label = "Bluesky post"
-            elif src_lower == "hackernews":
-                display_label = "HN discussion"
-            else:
-                display_label = f"{it.source} reaction"
+            display_label = display_label_for_source(it.source)
 
             drafts.append(
                 CardDraft(
