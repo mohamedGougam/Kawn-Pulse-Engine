@@ -73,6 +73,54 @@ class Settings(BaseSettings):
 
     news_rss_feeds: str = "https://news.google.com/rss/search?q={query}"
 
+    # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera) — these publish
+    # section feeds, not per-query search feeds, so unlike news_rss_feeds
+    # above there's no {query} to substitute. NewsRssConnector pulls all of
+    # them on every call and filters entries by topic_matches() instead.
+    # Reuters discontinued its public RSS in 2020 and still has none as of
+    # 2026 — routed through Reuters-scoped Google News search instead of a
+    # dead feed URL.
+    major_outlet_rss_feeds: str = (
+        "https://feeds.bbci.co.uk/news/world/rss.xml,"
+        "http://rss.cnn.com/rss/edition_world.rss,"
+        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml,"
+        "https://www.aljazeera.com/xml/rss/all.xml"
+    )
+    reuters_rss_workaround_template: str = "https://news.google.com/rss/search?q={query}+site:reuters.com"
+
+    # --- Bluesky firehose (Jetstream) ---
+    # Off by default: a firehose consumer is a long-lived connection, which
+    # only makes sense on an always-on process. On a free-tier web dyno
+    # that spins down after ~15 min idle, this dies with the dyno just like
+    # the in-process scheduler does — see cron-tick's docstring for the
+    # same issue. Turn on once this runs somewhere always-on (a paid
+    # instance, or a separate worker process).
+    bluesky_firehose_enabled: bool = False
+    bluesky_jetstream_url: str = (
+        "wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post"
+    )
+    # How many recent matched posts to keep per topic in memory. This is
+    # the *in-process* buffer only — see streaming/README notes: matches
+    # are also periodically flushed to the same R2 heavy-fetch cache
+    # everything else uses, so a restart doesn't lose everything, only
+    # whatever hadn't been flushed yet.
+    firehose_buffer_size_per_topic: int = 60
+    # How often matched-but-unflushed topics get written to R2. Kept well
+    # above a few seconds on purpose — R2's free tier caps at 1M writes/mo,
+    # and a global firehose can accumulate matches across many topics
+    # quickly; batching per topic keeps write volume proportional to
+    # distinct active topics, not to raw event volume.
+    firehose_flush_interval_seconds: float = 45.0
+
+    # --- Reddit stream (submissions + comments via asyncpraw) ---
+    # Same always-on caveat as Bluesky above.
+    reddit_stream_enabled: bool = False
+    # Comma-separated subreddits to stream, e.g. "all" for r/all (broadest
+    # coverage, highest volume) or a curated list like
+    # "technology,worldnews,science" (lower volume, more relevant to
+    # Discover_subjects' actual topics, cheaper on a constrained instance).
+    reddit_stream_subreddits: str = "all"
+
     producthunt_access_token: str | None = None
     discourse_instance_url: str = "https://meta.discourse.org"
     peertube_instance_url: str = "https://framatube.org"
@@ -130,6 +178,12 @@ class Settings(BaseSettings):
 
     def rss_feed_templates(self) -> list[str]:
         return [s.strip() for s in self.news_rss_feeds.split(",") if s.strip()]
+
+    def major_outlet_feeds(self) -> list[str]:
+        return [s.strip() for s in self.major_outlet_rss_feeds.split(",") if s.strip()]
+
+    def reddit_stream_subreddit_list(self) -> list[str]:
+        return [s.strip() for s in self.reddit_stream_subreddits.split(",") if s.strip()] or ["all"]
 
     def reddit_configured(self) -> bool:
         return bool(self.reddit_client_id and self.reddit_client_secret and self.reddit_user_agent)

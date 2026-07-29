@@ -12,6 +12,8 @@ from app.api.routes_topics import router as topics_router
 from app.config import settings
 from app.database import init_db
 from app.services.scheduler_service import SchedulerService
+from app.streaming.bluesky_firehose import bluesky_firehose_service
+from app.streaming.reddit_stream import reddit_stream_service
 from pathlib import Path
 
 
@@ -22,8 +24,15 @@ scheduler_service = SchedulerService()
 async def lifespan(app: FastAPI):
     await init_db()
     scheduler_service.start()
+    # Both no-op unless their *_enabled flag is set — see config.py for
+    # why they're off by default (need an always-on process, not a
+    # free-tier dyno that spins down on idle).
+    bluesky_firehose_service.start()
+    reddit_stream_service.start()
     yield
     scheduler_service.shutdown()
+    await bluesky_firehose_service.shutdown()
+    await reddit_stream_service.shutdown()
 
 
 app = FastAPI(

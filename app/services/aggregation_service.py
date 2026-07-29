@@ -8,22 +8,30 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.connectors.bluesky_connector import BlueskyConnector
+from app.connectors.bluesky_firehose_connector import BlueskyFirehoseConnector
 from app.connectors.devto_connector import DevToConnector
 from app.connectors.hackernews_connector import HackerNewsConnector
 from app.connectors.hashnode_connector import HashnodeConnector
 from app.connectors.mastodon_connector import MastodonConnector
 from app.connectors.mock_connector import MockConnector
 from app.connectors.news_connector import NewsRssConnector
-from app.connectors.reddit_connector import RedditConnector
+from app.connectors.reddit_stream_connector import RedditStreamConnector
 from app.connectors.wikipedia_connector import WikipediaConnector
 from app.connectors.youtube_connector import YouTubeConnector
 
 # Active set matches the fast/heavy connector lists as specified:
 #   fast:  Bluesky, Reddit, Mastodon, YouTube, HackerNews, Wikipedia
 #          (X/Twitter has no connector -- no free streaming API available)
+#          Bluesky and Reddit are now firehose/stream-backed (see
+#          BlueskyFirehoseConnector / RedditStreamConnector) with the
+#          original poll-based connectors kept internally as a fallback --
+#          see app/streaming/ for the consumers and the always-on-process
+#          caveat that comes with them.
 #   heavy: Dev.to, News (RSS -- Google News/Bing/Al Jazeera feed templates
-#          via NEWS_RSS_FEEDS), Hashnode
+#          via NEWS_RSS_FEEDS, plus fixed CNN/BBC/NYT/Al Jazeera section
+#          feeds and a Reuters-scoped Google News search -- see
+#          major_outlet_rss_feeds / reuters_rss_workaround_template),
+#          Hashnode
 #          (LinkedIn has no connector -- no free API available)
 #
 # Disabled -- code kept below, uncomment import + __init__ line + fetch_plan
@@ -146,11 +154,11 @@ class AggregationService:
         self.card_builder = PulseCardService(self.ai)
 
         self.mock = MockConnector()
-        self.bluesky = BlueskyConnector()
+        self.bluesky = BlueskyFirehoseConnector()
         self.mastodon = MastodonConnector()
         self.devto = DevToConnector()
         self.wikipedia = WikipediaConnector()
-        self.reddit = RedditConnector()
+        self.reddit = RedditStreamConnector()
         self.youtube = YouTubeConnector()
         self.news = NewsRssConnector()
         self.hackernews = HackerNewsConnector()
