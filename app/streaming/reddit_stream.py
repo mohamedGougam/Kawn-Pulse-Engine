@@ -165,6 +165,14 @@ class RedditStreamService:
         if not settings.reddit_configured():
             logger.warning("reddit_stream_enabled is True but Reddit API credentials are not configured; skipping")
             return
+        try:
+            import asyncpraw  # noqa: F401
+        except ImportError:
+            logger.warning(
+                "reddit_stream_enabled is True but the 'asyncpraw' package is not installed "
+                "(pip install -r requirements.txt); skipping the Reddit stream consumer"
+            )
+            return
         self._stop_event = asyncio.Event()
         self._tasks = [
             asyncio.create_task(_consume_forever(self._stop_event)),

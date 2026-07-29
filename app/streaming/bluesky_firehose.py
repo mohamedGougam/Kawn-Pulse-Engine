@@ -4,8 +4,6 @@ import asyncio
 import json
 import logging
 
-import websockets
-
 from app.config import settings
 from app.connectors.base import NormalizedRawItem
 from app.streaming.ring_buffer import StreamingRingBuffer
@@ -79,6 +77,8 @@ def _handle_event(raw: str) -> None:
 
 
 async def _consume_forever(stop_event: asyncio.Event) -> None:
+    import websockets
+
     backoff = 2.0
     while not stop_event.is_set():
         try:
@@ -144,6 +144,14 @@ class BlueskyFirehoseService:
 
     def start(self) -> None:
         if not settings.bluesky_firehose_enabled:
+            return
+        try:
+            import websockets  # noqa: F401
+        except ImportError:
+            logger.warning(
+                "bluesky_firehose_enabled is True but the 'websockets' package is not installed "
+                "(pip install -r requirements.txt); skipping the firehose consumer"
+            )
             return
         self._stop_event = asyncio.Event()
         self._tasks = [
