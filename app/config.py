@@ -71,6 +71,15 @@ class Settings(BaseSettings):
 
     youtube_api_key: str | None = None
 
+    # Per-connector kill switch for News, read by NewsRssConnector.enabled().
+    # This field was previously missing entirely -- settings.news_enabled
+    # raised AttributeError on every call, which got silently swallowed as
+    # "News returned nothing this round" instead of actually disabling it,
+    # and meant a disabled News kept getting backfilled from whatever was
+    # already sitting in the R2 heavy-fetch cache from before. Set
+    # NEWS_ENABLED=false to genuinely turn it off.
+    news_enabled: bool = True
+
     news_rss_feeds: str = "https://news.google.com/rss/search?q={query}"
 
     # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera) — these publish

@@ -129,6 +129,7 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
             "missing_sources": refresh_result.missing_sources,
             "cached_sources": refresh_result.cached_sources,
             "source_freshness": refresh_result.source_freshness,
+            "disabled_sources": refresh_result.disabled_sources,
         },
     )
 

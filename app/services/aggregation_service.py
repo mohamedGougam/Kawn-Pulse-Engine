@@ -75,6 +75,10 @@ class RefreshResult:
     # client show e.g. "Bluesky results are from 4 hours ago" instead of
     # just a generic "may be stale" note.
     source_freshness: dict[str, str]
+    # Sources whose connector.enabled() returned False — deliberately
+    # turned off, never attempted this round (not counted in
+    # missing_sources, and never backfilled from cache).
+    disabled_sources: list[str]
 
     @property
     def partial(self) -> bool:
@@ -235,6 +239,22 @@ class AggregationService:
 
         fetch_plan = self.fetch_plan
 
+        # Know which connectors are actually enabled *before* deciding
+        # whether to fall back to their R2 cache below. Without this, a
+        # connector that's deliberately turned off (enabled() == False)
+        # looks identical to one that just failed/timed out this round —
+        # both come back with an empty live result — so it still got
+        # backfilled from whatever was cached before it was disabled.
+        # Disabling a source should mean it's actually gone, not silently
+        # resurrected from stale cache.
+        enabled_by_source: dict[str, bool] = {}
+        for connector, fallback_source in fetch_plan:
+            try:
+                enabled_by_source[fallback_source] = bool(await connector.enabled())
+            except Exception as e:
+                logger.warning("%s.enabled() raised, treating as disabled: %s", fallback_source, e)
+                enabled_by_source[fallback_source] = False
+
         task_by_source: dict[str, asyncio.Task] = {
             fallback_source: asyncio.create_task(_bounded_fetch(connector, fallback_source))
             for connector, fallback_source in fetch_plan
@@ -242,13 +262,16 @@ class AggregationService:
 
         # Heavy-fetch cache reads run *in parallel* with the live fetch wave,
         # not after it — they're cheap R2 GETs and shouldn't add to the
-        # live-fetch budget. Read for every source up front; only the ones
-        # whose live fetch comes back empty actually get used below, but
-        # kicking them all off now means the fallback is ready the instant
-        # we know it's needed instead of paying R2 latency serially after.
+        # live-fetch budget. Read for every *enabled* source up front; only
+        # the ones whose live fetch comes back empty actually get used
+        # below, but kicking them all off now means the fallback is ready
+        # the instant we know it's needed instead of paying R2 latency
+        # serially after. Deliberately skipped for disabled sources — see
+        # the enabled_by_source comment above.
         cache_task_by_source: dict[str, asyncio.Task] = {
             fallback_source: asyncio.create_task(self._read_cached_source(fallback_source, topic.query))
             for _, fallback_source in fetch_plan
+            if enabled_by_source.get(fallback_source, True)
         }
 
         done, pending = await asyncio.wait(list(task_by_source.values()), timeout=settings.search_fetch_budget_seconds)
@@ -285,17 +308,27 @@ class AggregationService:
         # with a fresh `fetched_at`, making it look newer than it is.
         asyncio.create_task(self._persist_heavy_cache(topic.query, live_cleaned))
 
-        # Merge in cached data for any source whose live fetch came back
-        # empty (disabled, timed out, errored, or genuinely had nothing).
-        # This is the fix for "cards sometimes incomplete": a connector
-        # hiccup no longer means that source silently vanishes from the
-        # card set this round, as long as *some* previous heavy fetch has
-        # data for it. Sources still end up in `missing_sources` when even
-        # the cache has nothing, so incompleteness is visible instead of
-        # silent either way.
+        # Merge in cached data for any *enabled* source whose live fetch came
+        # back empty (timed out, errored, or genuinely had nothing this
+        # round). This is the fix for "cards sometimes incomplete": a
+        # connector hiccup no longer means that source silently vanishes
+        # from the card set this round, as long as *some* previous heavy
+        # fetch has data for it. Sources still end up in `missing_sources`
+        # when even the cache has nothing, so incompleteness is visible
+        # instead of silent either way.
+        #
+        # Deliberately disabled sources (enabled_by_source[source] is
+        # False) are excluded from both this merge *and* missing_sources —
+        # they were never attempted, so they're not "missing" and must not
+        # get quietly resurrected from whatever was cached before they were
+        # turned off.
         cleaned = list(live_cleaned)
         seen_keys = {_dedup_key(it) for it in cleaned}
-        empty_live_sources = [s for s, items in live_items_by_source.items() if not items]
+        empty_live_sources = [
+            s for s, items in live_items_by_source.items()
+            if not items and enabled_by_source.get(s, True)
+        ]
+        disabled_sources = [s for s, en in enabled_by_source.items() if not en]
 
         cached_sources: list[str] = []
         missing_sources: list[str] = []
@@ -454,6 +487,7 @@ class AggregationService:
             missing_sources=missing_sources,
             cached_sources=cached_sources,
             source_freshness=source_freshness,
+            disabled_sources=disabled_sources,
         )
 
     async def _read_cached_source(self, source: str, topic: str) -> dict | None:
