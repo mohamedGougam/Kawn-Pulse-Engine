@@ -633,11 +633,18 @@ class AggregationService:
         await asyncio.gather(*(_write_source(s, its) for s, its in by_source.items()), return_exceptions=True)
 
     async def _safe_fetch(self, connector, topic: str, limit: int, *, fallback_source: str, language: str | None = None) -> list:
-        if settings.enable_mock_data:
-            return [i for i in (await self.mock.fetch(topic, limit=limit, language=language)) if i.source == fallback_source][:limit]
-
+        # enabled() is checked first now: a source with no real credentials
+        # (e.g. Reddit/YouTube with no API keys set) must land in
+        # disabled_sources *and* actually have no cards, in both mock and
+        # live modes. Previously enable_mock_data was checked first, so a
+        # disabled connector could still get mock cards locally while
+        # disabled_sources reported it as off -- a contradiction in the same
+        # payload that also meant local dev didn't match what deploys.
         if not (await connector.enabled()):
             return []
+
+        if settings.enable_mock_data:
+            return [i for i in (await self.mock.fetch(topic, limit=limit, language=language)) if i.source == fallback_source][:limit]
 
         try:
             items = await asyncio.wait_for(

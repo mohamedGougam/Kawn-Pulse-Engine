@@ -22,9 +22,9 @@ async def sources_status() -> dict:
             "Wikipedia": {"enabled": live, "configured": True},
             # -- heavy tier --
             "DevTo": {"enabled": live, "configured": True},
-            "News": {"enabled": False and settings.news_enabled, "configured": True},
+            "News": {"enabled": live and settings.news_enabled, "configured": True},
             "Hashnode": {"enabled": live, "configured": True},
-            # -- not on the requested lists, disabled --
+        
             "Discourse": {"enabled": False, "configured": True},
             "Lobsters": {"enabled": False, "configured": True},
             "Lemmy": {"enabled": False, "configured": True},
