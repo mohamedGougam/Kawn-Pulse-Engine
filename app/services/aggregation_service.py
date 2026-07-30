@@ -10,11 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.connectors.bluesky_firehose_connector import BlueskyFirehoseConnector
 from app.connectors.devto_connector import DevToConnector
+from app.connectors.discourse_connector import DiscourseConnector
 from app.connectors.hackernews_connector import HackerNewsConnector
 from app.connectors.hashnode_connector import HashnodeConnector
+from app.connectors.lemmy_connector import LemmyConnector
+from app.connectors.lobsters_connector import LobstersConnector
 from app.connectors.mastodon_connector import MastodonConnector
 from app.connectors.mock_connector import MockConnector
 from app.connectors.news_connector import NewsRssConnector
+from app.connectors.peertube_connector import PeerTubeConnector
+from app.connectors.producthunt_connector import ProductHuntConnector
 from app.connectors.reddit_stream_connector import RedditStreamConnector
 from app.connectors.wikipedia_connector import WikipediaConnector
 from app.connectors.youtube_connector import YouTubeConnector
@@ -34,16 +39,13 @@ from app.connectors.youtube_connector import YouTubeConnector
 #          Hashnode
 #          (LinkedIn has no connector -- no free API available)
 #
-# Disabled -- code kept below, uncomment import + __init__ line + fetch_plan
-# entry to re-enable (not on either requested list, kept as optional extras):
-# from app.connectors.discourse_connector import DiscourseConnector
-# from app.connectors.lobsters_connector import LobstersConnector
-# from app.connectors.lemmy_connector import LemmyConnector
-# from app.connectors.peertube_connector import PeerTubeConnector
-# from app.connectors.producthunt_connector import ProductHuntConnector
-# from app.connectors.news_connector import NewsRssConnector
-# from app.connectors.reddit_connector import RedditConnector
-# from app.connectors.youtube_connector import YouTubeConnector
+# Extras -- not on either originally-requested list, but fully wired in and
+# enabled: Discourse, Lobsters, Lemmy, PeerTube (no auth needed), and
+# ProductHunt (only fires if PRODUCTHUNT_ACCESS_TOKEN is set -- see
+# settings.producthunt_configured()). All 5 add real outbound HTTP calls to
+# every search's connector fanout, on top of the 9 already active -- see the
+# stability note in refresh_topic about connector_timeout_seconds /
+# search_fetch_budget_seconds if this pushes total search latency up.
 from app.models.db_models import PulseCard, SourceBreakdown, SourceItem, TopicSummary
 from app.repositories.pulse_card_repository import PulseCardRepository
 from app.repositories.source_item_repository import SourceItemRepository
@@ -168,13 +170,12 @@ class AggregationService:
         self.hackernews = HackerNewsConnector()
         self.hashnode = HashnodeConnector()
 
-        # Not on either requested connector list -- kept disabled, code
-        # available if you want to re-add them as extras later.
-        # self.discourse = DiscourseConnector()
-        # self.lobsters = LobstersConnector()
-        # self.lemmy = LemmyConnector()
-        # self.peertube = PeerTubeConnector()
-        # self.producthunt = ProductHuntConnector()
+        # Not on either originally-requested list, but wired in as extras.
+        self.discourse = DiscourseConnector()
+        self.lobsters = LobstersConnector()
+        self.lemmy = LemmyConnector()
+        self.peertube = PeerTubeConnector()
+        self.producthunt = ProductHuntConnector()
 
         # Single source of truth for which connectors are active, shared by
         # refresh_topic's live-fetch wave and build_cache_preview_cards'
@@ -193,11 +194,12 @@ class AggregationService:
             (self.devto, "DevTo"),
             (self.news, "News"),
             (self.hashnode, "Hashnode"),
-            # (self.discourse, "Discourse"),
-            # (self.lobsters, "Lobsters"),
-            # (self.lemmy, "Lemmy"),
-            # (self.peertube, "PeerTube"),
-            # (self.producthunt, "ProductHunt"),
+            # -- extras --
+            (self.discourse, "Discourse"),
+            (self.lobsters, "Lobsters"),
+            (self.lemmy, "Lemmy"),
+            (self.peertube, "PeerTube"),
+            (self.producthunt, "ProductHunt"),
         ]
 
     async def refresh_topic(
@@ -633,18 +635,32 @@ class AggregationService:
         await asyncio.gather(*(_write_source(s, its) for s, its in by_source.items()), return_exceptions=True)
 
     async def _safe_fetch(self, connector, topic: str, limit: int, *, fallback_source: str, language: str | None = None) -> list:
-        # enabled() is checked first now: a source with no real credentials
-        # (e.g. Reddit/YouTube with no API keys set) must land in
-        # disabled_sources *and* actually have no cards, in both mock and
-        # live modes. Previously enable_mock_data was checked first, so a
-        # disabled connector could still get mock cards locally while
-        # disabled_sources reported it as off -- a contradiction in the same
-        # payload that also meant local dev didn't match what deploys.
-        if not (await connector.enabled()):
-            return []
-
+        # Mock mode is checked first: every connector's enabled() except
+        # NewsRssConnector is gated by `not settings.enable_mock_data`, so
+        # checking connector.enabled() before this would short-circuit 13 of
+        # 14 connectors to an empty list unconditionally while mock mode is
+        # on -- only News (whose enabled() ignores mock mode) ever returned
+        # anything. That's what was actually happening: local/dev testing
+        # with ENABLE_MOCK_DATA=true (the .env.example default) silently
+        # only ever populated News, no matter how many connectors were wired
+        # into fetch_plan. Mock mode's whole purpose is to simulate every
+        # source having data for UI/testing regardless of real
+        # configuration -- see the README's documented behavior -- so it
+        # must bypass each connector's own enabled() the same way it always
+        # bypasses real credentials.
+        #
+        # A prior attempt fixed this the other way around (enabled() first)
+        # to make disabled_sources' bookkeeping agree with what mock mode
+        # actually returned. That bookkeeping is computed independently in
+        # refresh_topic's enabled_by_source loop before this method ever
+        # runs, so it's unaffected by this ordering -- reverting the check
+        # order here only restores mock data, it doesn't reintroduce the
+        # inconsistency that earlier change was trying to solve.
         if settings.enable_mock_data:
             return [i for i in (await self.mock.fetch(topic, limit=limit, language=language)) if i.source == fallback_source][:limit]
+
+        if not (await connector.enabled()):
+            return []
 
         try:
             items = await asyncio.wait_for(

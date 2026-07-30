@@ -24,12 +24,12 @@ async def sources_status() -> dict:
             "DevTo": {"enabled": live, "configured": True},
             "News": {"enabled": live and settings.news_enabled, "configured": True},
             "Hashnode": {"enabled": live, "configured": True},
-        
-            "Discourse": {"enabled": False, "configured": True},
-            "Lobsters": {"enabled": False, "configured": True},
-            "Lemmy": {"enabled": False, "configured": True},
-            "PeerTube": {"enabled": False, "configured": True},
-            "ProductHunt": {"enabled": False, "configured": settings.producthunt_configured()},
+            # -- extras --
+            "Discourse": {"enabled": live, "configured": True},
+            "Lobsters": {"enabled": live, "configured": True},
+            "Lemmy": {"enabled": live, "configured": True},
+            "PeerTube": {"enabled": live, "configured": True},
+            "ProductHunt": {"enabled": live and settings.producthunt_configured(), "configured": settings.producthunt_configured()},
         },
     }
 
