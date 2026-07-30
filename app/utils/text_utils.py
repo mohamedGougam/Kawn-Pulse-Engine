@@ -109,3 +109,59 @@ def trim_text(text: str, *, max_len: int = 600) -> str:
 def content_fingerprint(*parts: str) -> str:
     joined = "||".join(normalize_ws(p) for p in parts if p is not None)
     return sha256(joined.encode("utf-8")).hexdigest()
+
+
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+# Words too generic to require a match on their own (kept lowercase).
+_STOPWORDS_FOR_MATCH = {
+    "the", "a", "an", "of", "for", "and", "or", "to", "in", "on", "with",
+    "is", "are", "be", "as", "at", "by", "it", "this", "that",
+}
+
+
+def _significant_tokens(topic: str) -> list[str]:
+    tokens = [t.lower() for t in _WORD_RE.findall(topic or "")]
+    significant = [t for t in tokens if len(t) >= 3 and t not in _STOPWORDS_FOR_MATCH]
+    # If everything got filtered out (e.g. topic is itself short/all-stopword),
+    # fall back to whatever tokens exist so short topics can still match.
+    return significant or tokens
+
+
+def topic_matches(topic: str, text: str, *, min_token_ratio: float = 0.5) -> bool:
+    """Loose relevance check used to filter streamed posts / RSS entries
+    that weren't fetched by a per-topic query in the first place (Bluesky
+    firehose, Reddit stream, and the fixed-URL major-outlet RSS feeds all
+    pull broad content and need to be matched against a topic client-side).
+
+    Matches if either:
+      - the whole topic phrase appears verbatim (normalized) in the text, or
+      - at least `min_token_ratio` of the topic's significant words appear
+        as whole words in the text.
+
+    Deliberately lenient (word-presence, not phrase order/proximity) since
+    over-strict matching silently starves a topic of results just as much
+    as a connector outage does.
+    """
+    if not topic or not text:
+        return False
+
+    topic_norm = normalize_ws(topic).lower()
+    text_norm = normalize_ws(text).lower()
+
+    if not topic_norm or not text_norm:
+        return False
+
+    if topic_norm in text_norm:
+        return True
+
+    topic_tokens = _significant_tokens(topic_norm)
+    if not topic_tokens:
+        return False
+
+    text_tokens = set(_WORD_RE.findall(text_norm))
+    hits = sum(1 for t in topic_tokens if t in text_tokens)
+
+    if len(topic_tokens) == 1:
+        return hits == 1
+
+    return (hits / len(topic_tokens)) >= min_token_ratio

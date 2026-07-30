@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import urllib.parse
 
 import feedparser
@@ -36,7 +37,6 @@ class NewsRssConnector:
         return True
 
     async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
-        items: list[NormalizedRawItem] = []
         hl, gl = _LANG_REGION.get((language or "").lower(), (None, None))
 
         # Query-templated feeds: Google News search + the Reuters workaround
@@ -46,48 +46,62 @@ class NewsRssConnector:
         # filtering needed.
         templated_feeds = settings.rss_feed_templates() + [settings.reuters_rss_workaround_template]
 
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            for tpl in templated_feeds:
-                if len(items) >= limit:
-                    break
-                url = tpl.format(query=urllib.parse.quote_plus(topic))
-                if hl and gl and "news.google.com" in url and "hl=" not in url:
-                    sep = "&" if "?" in url else "?"
-                    url = f"{url}{sep}hl={hl}&gl={gl}&ceid={gl}:{hl}"
-                await self._fetch_and_append(client, url, topic, language, items, limit, require_match=False)
+        fetch_jobs: list[tuple[str, bool]] = []
+        for tpl in templated_feeds:
+            url = tpl.format(query=urllib.parse.quote_plus(topic))
+            if hl and gl and "news.google.com" in url and "hl=" not in url:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}hl={hl}&gl={gl}&ceid={gl}:{hl}"
+            fetch_jobs.append((url, False))
 
-            # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera): these publish
-            # whole sections, not per-query search results, so every entry
-            # has to be matched against the topic ourselves.
-            for url in settings.major_outlet_feeds():
-                if len(items) >= limit:
-                    break
-                await self._fetch_and_append(client, url, topic, language, items, limit, require_match=True)
+        # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera): these publish
+        # whole sections, not per-query search results, so every entry has
+        # to be matched against the topic ourselves.
+        for url in settings.major_outlet_feeds():
+            fetch_jobs.append((url, True))
+
+        # Fetch every feed concurrently rather than one at a time. With up
+        # to 6 feed URLs here, awaiting them sequentially inside the shared
+        # per-connector timeout (connector_timeout_seconds, currently 3s)
+        # meant only the first feed or two ever had a real chance to finish
+        # before the whole connector got cancelled -- firing them all at
+        # once lets every feed race the same budget independently instead
+        # of queueing behind each other.
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            results = await asyncio.gather(
+                *(
+                    self._fetch_feed(client, url, topic, language, require_match=require_match)
+                    for url, require_match in fetch_jobs
+                ),
+                return_exceptions=True,
+            )
+
+        items: list[NormalizedRawItem] = []
+        for res in results:
+            if isinstance(res, Exception):
+                continue
+            items.extend(res)
 
         return items[:limit]
 
-    async def _fetch_and_append(
+    async def _fetch_feed(
         self,
         client: httpx.AsyncClient,
         url: str,
         topic: str,
         language: str | None,
-        items: list[NormalizedRawItem],
-        limit: int,
         *,
         require_match: bool,
-    ) -> None:
+    ) -> list[NormalizedRawItem]:
         try:
             resp = await client.get(url, headers={"User-Agent": settings.reddit_user_agent})
             resp.raise_for_status()
         except Exception:
-            return
+            return []
 
         parsed = feedparser.parse(resp.text)
+        items: list[NormalizedRawItem] = []
         for e in parsed.entries:
-            if len(items) >= limit:
-                break
-
             source_url = getattr(e, "link", None) or getattr(e, "id", None) or url
             title = normalize_ws(getattr(e, "title", "") or "")
             summary = normalize_ws(getattr(e, "summary", "") or "")
@@ -114,4 +128,6 @@ class NewsRssConnector:
                     external_id=None,
                 )
             )
+
+        return items
 
