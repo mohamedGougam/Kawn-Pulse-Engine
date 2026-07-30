@@ -10,6 +10,8 @@ import httpx
 
 from app.config import settings
 from app.connectors.base import NormalizedRawItem
+from app.streaming.reddit_stream import buffer as firehose_buffer
+from app.streaming.watchlist import watchlist
 from app.utils.date_utils import utcnow
 from app.utils.text_utils import normalize_ws
 
@@ -180,3 +182,34 @@ async def _get_token(*, force_refresh: bool = False) -> str | None:
                 _cached_token = None
                 _cached_token_expires_at = 0.0
                 return None
+
+class RedditStreamConnector:
+    """Same `fetch()` contract as RedditConnector, backed by the asyncpraw
+    submissions/comments stream buffer when it's running, with the original
+    poll-based OAuth search connector kept as a fallback.
+
+    Mirrors BlueskyFirehoseConnector's shape for the same two reasons: (1)
+    the stream consumer is disabled or not running
+    (reddit_stream_enabled=False, or the always-on process it needs isn't
+    set up), and (2) a brand-new topic has nothing buffered yet even with a
+    healthy stream, since the stream only has data for topics it was
+    already watching.
+    """
+
+    name = "Reddit"
+
+    def __init__(self) -> None:
+        self._poll_fallback = RedditConnector()
+
+    async def enabled(self) -> bool:
+        return await self._poll_fallback.enabled()
+
+    async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
+        watchlist.register(topic)
+
+        if settings.reddit_stream_enabled:
+            buffered = firehose_buffer.get("Reddit", topic, limit=limit)
+            if buffered:
+                return buffered
+
+        return await self._poll_fallback.fetch(topic, limit=limit, language=language)

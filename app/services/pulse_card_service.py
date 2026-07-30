@@ -22,10 +22,25 @@ class CardDraft:
     display_label: str
 
 
+_NEWS_OUTLET_NAMES = {"news", "bbc", "cnn", "nyt", "al jazeera", "al arabiya", "euronews", "reuters"}
+
+
+def connector_family_for_source(source: str) -> str:
+    """Collapses a real outlet display name (BBC, CNN, Al Jazeera, ...) back
+    to the shared "News" connector identity for grouping/capping purposes
+    only (per-source item caps, round-robin card selection). Without this,
+    splitting one connector's output across several display names would let
+    it claim several caps' worth of items / round-robin slots instead of
+    one, crowding out lower-volume connectors like Reddit or YouTube.
+    display_label_for_source (below) still uses the real, un-collapsed name
+    for what the user actually sees on each card."""
+    return "News" if source.lower() in _NEWS_OUTLET_NAMES else source
+
+
 def display_label_for_source(source: str) -> str:
     src_lower = source.lower()
-    if src_lower == "news":
-        return "News quote"
+    if src_lower in _NEWS_OUTLET_NAMES:
+        return "News quote" if src_lower == "news" else f"{source} quote"
     elif src_lower == "youtube":
         return "YouTube clip"
     elif src_lower == "reddit":
@@ -49,10 +64,12 @@ class PulseCardService:
         # Deterministic per-topic randomness so UI is stable across re-renders.
         rnd = random.Random(abs(hash(topic)) % (2**32))
 
-        # Group items by source, shuffled within each group.
+        # Group items by connector family (real outlet names all collapse
+        # back to "News" here — see connector_family_for_source), shuffled
+        # within each group.
         by_source: dict[str, list[tuple[int, NormalizedItem]]] = {}
         for idx, it in enumerate(items):
-            by_source.setdefault(it.source, []).append((idx, it))
+            by_source.setdefault(connector_family_for_source(it.source), []).append((idx, it))
         for src in by_source:
             rnd.shuffle(by_source[src])
 

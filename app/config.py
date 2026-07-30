@@ -82,10 +82,14 @@ class Settings(BaseSettings):
 
     news_rss_feeds: str = "https://news.google.com/rss/search?q={query}"
 
-    # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera) — these publish
-    # section feeds, not per-query search feeds, so unlike news_rss_feeds
-    # above there's no {query} to substitute. NewsRssConnector pulls all of
-    # them on every call and filters entries by topic_matches() instead.
+    # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera/Al Arabiya/Euronews) —
+    # these publish section feeds, not per-query search feeds, so unlike
+    # news_rss_feeds above there's no {query} to substitute. NewsRssConnector
+    # pulls all of them on every call and filters entries by
+    # topic_matches() instead. Each item's actual outlet is resolved from
+    # its feed URL (see _OUTLET_NAME_BY_URL_FRAGMENT in news_connector.py)
+    # so cards show "BBC" / "CNN" / "Al Arabiya" etc. instead of the
+    # generic connector name "News".
     # Reuters discontinued its public RSS in 2020 and still has none as of
     # 2026 — routed through Reuters-scoped Google News search instead of a
     # dead feed URL.
@@ -93,7 +97,9 @@ class Settings(BaseSettings):
         "https://feeds.bbci.co.uk/news/world/rss.xml,"
         "http://rss.cnn.com/rss/edition_world.rss,"
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml,"
-        "https://www.aljazeera.com/xml/rss/all.xml"
+        "https://www.aljazeera.com/xml/rss/all.xml,"
+        "https://english.alarabiya.net/feed/flipboard/en.xml,"
+        "https://feeds.feedburner.com/euronews/en/home/"
     )
     reuters_rss_workaround_template: str = "https://news.google.com/rss/search?q={query}+site:reuters.com"
 

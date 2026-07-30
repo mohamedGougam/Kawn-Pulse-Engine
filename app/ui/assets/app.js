@@ -245,7 +245,7 @@ function actionLabel(source) {
   const s = String(source || "").toLowerCase();
   if (s === "youtube") return "Watch on YouTube";
   if (s === "reddit") return "Open Reddit thread";
-  if (s === "news") return "Read article";
+  if (s === "news" || s === "bbc" || s === "cnn" || s === "nyt" || s === "al jazeera" || s === "al arabiya" || s === "euronews" || s === "reuters") return "Read article";
   if (s === "bluesky") return "Open on Bluesky";
   if (s === "hackernews") return "Open on Hacker News";
   if (s === "lemmy") return "Open on Lemmy";

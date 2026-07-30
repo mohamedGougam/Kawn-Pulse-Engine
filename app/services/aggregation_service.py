@@ -53,7 +53,7 @@ from app.repositories.topic_repository import TopicRepository
 from app.services.ai_service import AIService
 from app.services.cleaning_service import CleaningService
 from app.services.normalization_service import NormalizationService, NormalizedItem
-from app.services.pulse_card_service import PulseCardService, display_label_for_source
+from app.services.pulse_card_service import PulseCardService, connector_family_for_source, display_label_for_source
 from app.storage.object_store import ObjectStoreUnavailable, object_store
 from app.utils.date_utils import parse_datetime
 from app.utils.text_utils import best_sentence, clean_text, is_low_quality, trim_text
@@ -122,7 +122,11 @@ def _normalized_items_from_cache_payload(
             continue
         out.append(
             NormalizedItem(
-                source=source,
+                # Older cache files (written before per-item "source" was
+                # tracked) don't have this key -- fall back to the
+                # connector-level source so those entries still resolve to
+                # something sensible ("News") instead of erroring.
+                source=raw.get("source") or source,
                 source_url=source_url,
                 topic=topic_query,
                 author=raw.get("author"),
@@ -298,6 +302,18 @@ class AggregationService:
 
         raw_items: list = [item for batch in live_items_by_source.values() for item in batch]
 
+        # NewsRssConnector now labels each item with its actual publisher
+        # (BBC/CNN/Al Jazeera/...) rather than the generic connector name
+        # "News", so item.source can no longer be used to route heavy-cache
+        # writes back to the right connector -- _read_cached_source always
+        # reads back under the connector's fallback_source ("News"). Track
+        # that mapping by source_url (unique per item) before it's lost.
+        connector_by_source_url: dict[str, str] = {
+            item.source_url: source
+            for source, batch in live_items_by_source.items()
+            for item in batch
+        }
+
         normalized = [self.normalizer.normalize(r) for r in raw_items]
         normalized_items = [n for n in normalized if n is not None]
         live_cleaned = self.cleaner.clean(normalized_items)
@@ -308,7 +324,7 @@ class AggregationService:
         # Deliberately only the *live* items, not cache-fallback items added
         # below — otherwise a stale cache entry would keep re-writing itself
         # with a fresh `fetched_at`, making it look newer than it is.
-        asyncio.create_task(self._persist_heavy_cache(topic.query, live_cleaned))
+        asyncio.create_task(self._persist_heavy_cache(topic.query, live_cleaned, connector_by_source_url))
 
         # Merge in cached data for any *enabled* source whose live fetch came
         # back empty (timed out, errored, or genuinely had nothing this
@@ -554,7 +570,7 @@ class AggregationService:
         # ones, only the sentiment badge is a placeholder.
         by_source: dict[str, list[NormalizedItem]] = {}
         for it in items:
-            by_source.setdefault(it.source, []).append(it)
+            by_source.setdefault(connector_family_for_source(it.source), []).append(it)
 
         ordered_sources = sorted(by_source.keys(), key=lambda s: -len(by_source[s]))
         cursors = {s: 0 for s in ordered_sources}
@@ -603,17 +619,26 @@ class AggregationService:
 
         return drafts
 
-    async def _persist_heavy_cache(self, topic: str, items: list) -> None:
+    async def _persist_heavy_cache(
+        self, topic: str, items: list, connector_by_source_url: dict[str, str] | None = None
+    ) -> None:
         if not settings.r2_configured():
             return
 
+        connector_by_source_url = connector_by_source_url or {}
         by_source: dict[str, list] = {}
         for it in items:
-            by_source.setdefault(it.source, []).append(it)
+            # Cache key is the connector's own identity (e.g. "News"), not
+            # the item's display source (e.g. "BBC") -- see refresh_topic's
+            # connector_by_source_url comment. Falls back to it.source for
+            # any caller that doesn't pass the map.
+            cache_key = connector_by_source_url.get(it.source_url, it.source)
+            by_source.setdefault(cache_key, []).append(it)
 
         async def _write_source(source: str, source_items: list) -> None:
             payload = [
                 {
+                    "source": i.source,
                     "source_url": i.source_url,
                     "author": i.author,
                     "text": i.text,
@@ -699,10 +724,16 @@ def _balance_by_source(items: list, *, per_source_cap: int) -> list:
     source's most recent items, then merge back together sorted by recency.
     Prevents a high-volume source (e.g. News, which finds new unique items
     on every refresh) from crowding lower-volume sources out entirely.
+
+    Grouped by connector family (connector_family_for_source), not the raw
+    per-item source string: NewsRssConnector now labels items with the real
+    outlet (BBC/CNN/Al Jazeera/...), and without collapsing those back to
+    one "News" bucket here, the News tier alone could claim
+    len(outlets) * per_source_cap items instead of one cap's worth.
     """
     by_source: dict[str, list] = {}
     for it in items:
-        by_source.setdefault(it.source, []).append(it)
+        by_source.setdefault(connector_family_for_source(it.source), []).append(it)
 
     capped: list = []
     for src_items in by_source.values():

@@ -30,11 +30,36 @@ _LANG_REGION = {
 }
 
 
+# Maps a distinctive fragment of each fixed outlet feed's URL (see
+# settings.major_outlet_rss_feeds) to the publisher's display name, so
+# items pulled from these feeds are attributed to the actual outlet
+# ("BBC", "CNN", "Al Arabiya", "Euronews", ...) instead of the generic
+# connector name "News". Checked with simple substring matching against
+# the feed URL, not the entry/article URL, since outlets sometimes proxy
+# article links through other domains.
+_OUTLET_NAME_BY_URL_FRAGMENT: list[tuple[str, str]] = [
+    ("bbci.co.uk", "BBC"),
+    ("cnn.com", "CNN"),
+    ("nytimes.com", "NYT"),
+    ("aljazeera.com", "Al Jazeera"),
+    ("alarabiya.net", "Al Arabiya"),
+    ("euronews", "Euronews"),
+    ("reuters.com", "Reuters"),
+]
+
+
+def _outlet_name_for_feed_url(feed_url: str) -> str | None:
+    for fragment, outlet_name in _OUTLET_NAME_BY_URL_FRAGMENT:
+        if fragment in feed_url:
+            return outlet_name
+    return None
+
+
 class NewsRssConnector:
     name = "News"
 
     async def enabled(self) -> bool:
-        return True
+        return settings.news_enabled
 
     async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
         hl, gl = _LANG_REGION.get((language or "").lower(), (None, None))
@@ -99,6 +124,15 @@ class NewsRssConnector:
         except Exception:
             return []
 
+        # Resolve the actual publisher from the feed URL itself where we
+        # can (fixed outlet feeds, plus the Reuters-scoped Google News
+        # workaround). Google News' own search feeds embed the originating
+        # publisher per-entry (<source>), so fall back to that when the
+        # feed URL itself doesn't identify a single outlet -- e.g. the
+        # generic query-templated Google News search covers many
+        # publishers at once and has nothing to key off of otherwise.
+        feed_outlet_name = _outlet_name_for_feed_url(url)
+
         parsed = feedparser.parse(resp.text)
         items: list[NormalizedRawItem] = []
         for e in parsed.entries:
@@ -114,9 +148,13 @@ class NewsRssConnector:
             if require_match and not (topic_matches(topic, text) or topic_matches(topic, title)):
                 continue
 
+            entry_source = getattr(e, "source", None)
+            entry_outlet_name = normalize_ws(getattr(entry_source, "title", "") or "") if entry_source else ""
+            outlet_name = (feed_outlet_name or entry_outlet_name or "News")[:40]
+
             items.append(
                 NormalizedRawItem(
-                    source="News",
+                    source=outlet_name,
                     source_url=source_url,
                     topic=topic,
                     author=(getattr(e, "author", None) or None),
