@@ -40,15 +40,21 @@ class Settings(BaseSettings):
     # tighter per-connector timeout is what actually bounds total search
     # latency — and it means a stuck source gets replaced by its cache
     # fallback sooner instead of eating the whole budget.
-    connector_timeout_seconds: float = 3.0
+    # Raised from 3.0: in production (extra network hops, cold TLS handshake
+    # per connector since each fetch() opens its own httpx.AsyncClient, no
+    # keep-alive reuse across calls) most real connectors — especially News,
+    # which has to wait on all 8 of its RSS feeds inside this same budget —
+    # routinely ran past 3s and got cancelled outright by asyncio.wait_for,
+    # leaving only the single lightweight Lemmy endpoint reliably finishing
+    # in time. Can still be overridden via CONNECTOR_TIMEOUT_SECONDS.
+    connector_timeout_seconds: float = 8.0
     # Overall budget for a live/search-triggered refresh. Once this elapses,
     # aggregation returns whatever connectors have finished instead of waiting
-    # for stragglers. With every connector now firing in a single wave
-    # (no more queueing through a concurrency-3 semaphore), this no longer
-    # needs slack for multiple waves — set to roughly double
-    # connector_timeout_seconds as a backstop for event-loop scheduling
-    # delays, not because any connector should legitimately take this long.
-    search_fetch_budget_seconds: float = 6.0
+    # for stragglers. Kept at roughly 1.25x connector_timeout_seconds as a
+    # backstop for event-loop scheduling delays, not because any connector
+    # should legitimately take this long. Can be overridden via
+    # SEARCH_FETCH_BUDGET_SECONDS.
+    search_fetch_budget_seconds: float = 10.0
 
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only
