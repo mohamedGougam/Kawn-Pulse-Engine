@@ -19,16 +19,16 @@ async def sources_status() -> dict:
             "Mastodon": {"enabled": live, "configured": True},
             "YouTube": {"enabled": live and settings.youtube_configured(), "configured": settings.youtube_configured()},
             "HackerNews": {"enabled": live, "configured": True},
-            "Wikipedia": {"enabled": live, "configured": True},
+            "Wikipedia": {"enabled": False, "configured": True},
             # -- heavy tier --
             "DevTo": {"enabled": live, "configured": True},
-            "News": {"enabled": live, "configured": True},
-            "Hashnode": {"enabled": live, "configured": True},
+            "News": {"enabled": False, "configured": True},
+            "Hashnode": {"enabled": False, "configured": True},
             # -- not on the requested lists, disabled --
-            "Discourse": {"enabled": False, "configured": True},
+            "Discourse": {"enabled": live, "configured": True},
             "Lobsters": {"enabled": False, "configured": True},
-            "Lemmy": {"enabled": False, "configured": True},
-            "PeerTube": {"enabled": False, "configured": True},
+            "Lemmy": {"enabled": live, "configured": True},
+            "PeerTube": {"enabled": live, "configured": True},
             "ProductHunt": {"enabled": False, "configured": settings.producthunt_configured()},
         },
     }
