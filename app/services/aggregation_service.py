@@ -188,7 +188,10 @@ class AggregationService:
         # connector here automatically covers both call sites).
         self.fetch_plan = [
             # -- fast tier --
-            (self.bluesky, "Bluesky"),
+            # Bluesky disabled: public.api.bsky.app was returning 403s for
+            # every query from Render's IPs, so this was pure wasted latency
+            # (plus eating into the per-topic refresh_topic budget). Re-add
+            # (self.bluesky, "Bluesky") here if that ever changes.
             (self.reddit, "Reddit"),
             (self.mastodon, "Mastodon"),
             (self.youtube, "YouTube"),
