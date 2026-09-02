@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,21 @@ class Settings(BaseSettings):
     # Prod (Render free tier has no persistent disk): a Postgres URL, e.g. Neon.
     #   postgresql+asyncpg://user:pass@host/dbname
     database_url: str = "sqlite:///./kawn_pulse.db"
+
+    # render.yaml marks DATABASE_URL as `sync: false`, so Render creates the
+    # env var but leaves it as an empty string until someone pastes a real
+    # Postgres URL into the dashboard. Pydantic treats "" as a provided value
+    # (not "unset"), so without this it overrides the sqlite default above
+    # with "", which then hits create_async_engine() as an unparsable URL and
+    # crashes the whole app at import time before FastAPI can even start.
+    # Coerce a blank value back to "unset" here so the sqlite default applies
+    # instead of hard-crashing the service over a blank secret.
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _empty_database_url_falls_back_to_default(cls, v: str | None) -> str:
+        if v is None or not v.strip():
+            return "sqlite:///./kawn_pulse.db"
+        return v
 
     # Object storage (heavy-fetch JSON cache) — Cloudflare R2, S3-compatible.
     # Free tier: 10GB storage, 1M writes/mo, 10M reads/mo, no egress fees.
@@ -217,4 +233,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
