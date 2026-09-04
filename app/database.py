@@ -32,24 +32,49 @@ ASYNC_DATABASE_URL = _to_async_url(settings.database_url)
 IS_SQLITE = ASYNC_DATABASE_URL.startswith("sqlite")
 
 _connect_args: dict = {}
+_engine_kwargs: dict = {}
 if not IS_SQLITE:
-    # asyncpg doesn't accept the "?sslmode=require" query param that Neon /
-    # most Postgres hosts hand you by default — strip it and pass ssl via
-    # connect_args instead.
-    if "sslmode=" in ASYNC_DATABASE_URL:
+    # asyncpg doesn't accept libpq-only query params that Neon / most managed
+    # Postgres hosts put in their default connection strings — strip them and
+    # translate the ones that matter into connect_args instead.
+    # - sslmode=require -> ssl=True
+    # - channel_binding=require -> asyncpg has no equivalent option and
+    #   raises "invalid connection option 'channel_binding'" on connect if
+    #   it's left in the DSN, so it's simply dropped (ssl=True already
+    #   covers the encrypted-transport requirement it's paired with).
+    if "sslmode=" in ASYNC_DATABASE_URL or "channel_binding=" in ASYNC_DATABASE_URL:
         from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
         parts = urlsplit(ASYNC_DATABASE_URL)
         query = dict(parse_qsl(parts.query))
         query.pop("sslmode", None)
+        query.pop("channel_binding", None)
         ASYNC_DATABASE_URL = urlunsplit(parts._replace(query=urlencode(query)))
         _connect_args["ssl"] = True
+
+    # Free/serverless Postgres (Neon, Render's own free tier, etc.) suspends
+    # or drops idle connections after a period of inactivity — which on a
+    # free-tier web dyno that itself spins down after ~15 min idle, easily
+    # happens between one day's traffic and the next. Without these, the
+    # pool hands out a connection object that *looks* fine but whose
+    # underlying socket is already dead, the first query on it raises
+    # unhandled (routes_topics._session_dep has no try/except around session
+    # acquisition), and that surfaces to the caller as a plain 500 — same
+    # symptom as the original blank-DATABASE_URL crash, different cause.
+    # pool_pre_ping issues a cheap "SELECT 1" before handing out a pooled
+    # connection and transparently reconnects if it's dead; pool_recycle
+    # proactively retires connections before they get old enough to be
+    # server-side-closed in the first place. Neither applies to sqlite,
+    # which has no server-side idle timeout to guard against.
+    _engine_kwargs["pool_pre_ping"] = True
+    _engine_kwargs["pool_recycle"] = 1800
 
 engine: AsyncEngine = create_async_engine(
     ASYNC_DATABASE_URL,
     echo=False,
     future=True,
     connect_args=_connect_args,
+    **_engine_kwargs,
 )
 
 AsyncSessionLocal = sessionmaker(
