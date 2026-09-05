@@ -15,7 +15,10 @@ logger = logging.getLogger("kawn.streaming.reddit")
 
 SOURCE = "Reddit"
 
-buffer = StreamingRingBuffer(maxlen_per_topic=settings.firehose_buffer_size_per_topic)
+buffer = StreamingRingBuffer(
+    maxlen_per_topic=settings.firehose_buffer_size_per_topic,
+    max_topics=settings.watchlist_max_topics,
+)
 
 
 def _match_and_buffer(*, source_url: str, author: str | None, title: str | None,
