@@ -205,9 +205,13 @@ class RedditStreamConnector:
         return await self._poll_fallback.enabled()
 
     async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
-        watchlist.register(topic)
-
         if settings.reddit_stream_enabled:
+            # Only worth tracking when the stream consumer is actually
+            # running to read it back via watchlist.all() — registering
+            # unconditionally here (regardless of reddit_stream_enabled)
+            # used to grow TopicWatchlist forever for a value nothing ever
+            # consumed while the stream was off, which is the default.
+            watchlist.register(topic)
             buffered = firehose_buffer.get("Reddit", topic, limit=limit)
             if buffered:
                 return buffered

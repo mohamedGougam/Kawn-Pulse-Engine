@@ -148,6 +148,13 @@ class Settings(BaseSettings):
     # quickly; batching per topic keeps write volume proportional to
     # distinct active topics, not to raw event volume.
     firehose_flush_interval_seconds: float = 45.0
+    # Hard cap on TopicWatchlist size (see streaming/watchlist.py). Without
+    # this, every distinct query ever searched stayed in memory for the
+    # life of the process — an unbounded leak that only showed up as an
+    # OOM crash after enough uptime/traffic, not on any single request.
+    # LRU-evicted once exceeded, so this bounds worst-case memory
+    # regardless of how long the process runs.
+    watchlist_max_topics: int = 500
 
     # --- Reddit stream (submissions + comments via asyncpraw) ---
     # Same always-on caveat as Bluesky above.

@@ -29,9 +29,13 @@ class BlueskyFirehoseConnector:
         return await self._poll_fallback.enabled()
 
     async def fetch(self, topic: str, *, limit: int, language: str | None = None) -> list[NormalizedRawItem]:
-        watchlist.register(topic)
-
         if settings.bluesky_firehose_enabled:
+            # Only worth tracking when the stream consumer is actually
+            # running to read it back via watchlist.all() — registering
+            # unconditionally here (regardless of bluesky_firehose_enabled)
+            # used to grow TopicWatchlist forever for a value nothing ever
+            # consumed while the firehose was off, which is the default.
+            watchlist.register(topic)
             buffered = firehose_buffer.get("Bluesky", topic, limit=limit)
             if buffered:
                 return buffered
