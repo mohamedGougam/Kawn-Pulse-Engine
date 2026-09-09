@@ -57,20 +57,14 @@ if not IS_SQLITE:
     # requires disabling asyncpg's prepared statement cache.
     _connect_args["statement_cache_size"] = 0
 
-    # Free/serverless Postgres (Neon, Render's own free tier, etc.) suspends
-    # or drops idle connections after a period of inactivity — which on a
-    # free-tier web dyno that itself spins down after ~15 min idle, easily
-    # happens between one day's traffic and the next. Without these, the
-    # pool hands out a connection object that *looks* fine but whose
-    # underlying socket is already dead, the first query on it raises
-    # unhandled (routes_topics._session_dep has no try/except around session
-    # acquisition), and that surfaces to the caller as a plain 500 — same
-    # symptom as the original blank-DATABASE_URL crash, different cause.
-    # pool_pre_ping issues a cheap "SELECT 1" before handing out a pooled
-    # connection and transparently reconnects if it's dead; pool_recycle
-    # proactively retires connections before they get old enough to be
-    # server-side-closed in the first place. Neither applies to sqlite,
-    # which has no server-side idle timeout to guard against.
+    # With serverless Postgres & PgBouncer (such as Neon's pooler endpoint),
+    # connection pooling is already handled on the server side by PgBouncer.
+    # SQLAlchemy's default QueuePool (size 5, overflow 10) creates an artificial
+    # client-side bottleneck where concurrent requests time out after 30 seconds
+    # (QueuePool limit reached). Using NullPool delegates pooling to PgBouncer
+    # and eliminates client-side connection checkout timeouts entirely.
+    from sqlalchemy.pool import NullPool
+    _engine_kwargs["poolclass"] = NullPool
     _engine_kwargs["pool_pre_ping"] = True
     _engine_kwargs["pool_recycle"] = 1800
 else:
