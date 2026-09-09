@@ -187,26 +187,12 @@ class AggregationService:
         # connector objects, but keeping one list means re-enabling a
         # connector here automatically covers both call sites).
         self.fetch_plan = [
-            # -- fast tier --
-            # Bluesky disabled: public.api.bsky.app was returning 403s for
-            # every query from Render's IPs, so this was pure wasted latency
-            # (plus eating into the per-topic refresh_topic budget). Re-add
-            # (self.bluesky, "Bluesky") here if that ever changes.
-            (self.reddit, "Reddit"),
-            (self.mastodon, "Mastodon"),
-            (self.youtube, "YouTube"),
-            (self.hackernews, "HackerNews"),
-            (self.wikipedia, "Wikipedia"),
-            # -- heavy tier --
-            (self.devto, "DevTo"),
             (self.news, "News"),
-            (self.hashnode, "Hashnode"),
-            # -- extras --
-            (self.discourse, "Discourse"),
-            (self.lobsters, "Lobsters"),
-            (self.lemmy, "Lemmy"),
-            (self.peertube, "PeerTube"),
-            (self.producthunt, "ProductHunt"),
+            (self.reddit, "Reddit"),
+            (self.wikipedia, "Wikipedia"),
+            (self.hackernews, "HackerNews"),
+            (self.devto, "DevTo"),
+            (self.mastodon, "Mastodon"),
         ]
 
     async def refresh_topic(
@@ -277,11 +263,13 @@ class AggregationService:
         # the instant we know it's needed instead of paying R2 latency
         # serially after. Deliberately skipped for disabled sources — see
         # the enabled_by_source comment above.
-        cache_task_by_source: dict[str, asyncio.Task] = {
-            fallback_source: asyncio.create_task(self._read_cached_source(fallback_source, topic.query))
-            for _, fallback_source in fetch_plan
-            if enabled_by_source.get(fallback_source, True)
-        }
+        cache_task_by_source: dict[str, asyncio.Task] = {}
+        if settings.r2_configured():
+            cache_task_by_source = {
+                fallback_source: asyncio.create_task(self._read_cached_source(fallback_source, topic.query))
+                for _, fallback_source in fetch_plan
+                if enabled_by_source.get(fallback_source, True)
+            }
 
         done, pending = await asyncio.wait(list(task_by_source.values()), timeout=settings.search_fetch_budget_seconds)
         for t in pending:
@@ -354,32 +342,35 @@ class AggregationService:
         cached_sources: list[str] = []
         missing_sources: list[str] = []
         source_freshness: dict[str, str] = {}
-        for source in empty_live_sources:
-            cache_task = cache_task_by_source.get(source)
-            cache_payload = None
-            if cache_task is not None:
-                try:
-                    cache_payload = await asyncio.wait_for(cache_task, timeout=settings.heavy_cache_read_timeout_seconds)
-                except Exception as e:
-                    logger.warning("heavy cache read failed for source=%s topic=%r: %s", source, query, e)
+        if settings.r2_configured():
+            for source in empty_live_sources:
+                cache_task = cache_task_by_source.get(source)
+                cache_payload = None
+                if cache_task is not None:
+                    try:
+                        cache_payload = await asyncio.wait_for(cache_task, timeout=settings.heavy_cache_read_timeout_seconds)
+                    except Exception as e:
+                        logger.warning("heavy cache read failed for source=%s topic=%r: %s", source, query, e)
 
-            cache_items = _normalized_items_from_cache_payload(source, topic.query, cache_payload, limit=per)
-            added_any = False
-            for item in cache_items:
-                key = _dedup_key(item)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                cleaned.append(item)
-                added_any = True
+                cache_items = _normalized_items_from_cache_payload(source, topic.query, cache_payload, limit=per)
+                added_any = False
+                for item in cache_items:
+                    key = _dedup_key(item)
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    cleaned.append(item)
+                    added_any = True
 
-            if added_any:
-                cached_sources.append(source)
-                fetched_at = (cache_payload or {}).get("fetched_at")
-                if fetched_at:
-                    source_freshness[source] = fetched_at
-            else:
-                missing_sources.append(source)
+                if added_any:
+                    cached_sources.append(source)
+                    fetched_at = (cache_payload or {}).get("fetched_at")
+                    if fetched_at:
+                        source_freshness[source] = fetched_at
+                else:
+                    missing_sources.append(source)
+        else:
+            missing_sources.extend(empty_live_sources)
 
         # Any cache reads for sources that turned out not to need them
         # (live succeeded) are still running in the background — let them

@@ -63,14 +63,11 @@ class Settings(BaseSettings):
     # routinely ran past 3s and got cancelled outright by asyncio.wait_for,
     # leaving only the single lightweight Lemmy endpoint reliably finishing
     # in time. Can still be overridden via CONNECTOR_TIMEOUT_SECONDS.
-    connector_timeout_seconds: float = 8.0
+    connector_timeout_seconds: float = 4.0
     # Overall budget for a live/search-triggered refresh. Once this elapses,
     # aggregation returns whatever connectors have finished instead of waiting
-    # for stragglers. Kept at roughly 1.25x connector_timeout_seconds as a
-    # backstop for event-loop scheduling delays, not because any connector
-    # should legitimately take this long. Can be overridden via
-    # SEARCH_FETCH_BUDGET_SECONDS.
-    search_fetch_budget_seconds: float = 10.0
+    # for stragglers.
+    search_fetch_budget_seconds: float = 5.0
 
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only

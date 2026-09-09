@@ -75,15 +75,68 @@ def _summary_schema(s: TopicSummaryDB) -> TopicSummarySchema:
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_session_dep)) -> SearchResponse:
+async def search_topic(
+    req: SearchRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(_session_dep),
+) -> SearchResponse:
+    from datetime import datetime
     import logging
-    import traceback
     logger = logging.getLogger("kawn.search")
 
+    query = req.query.strip()
+    language = req.language or None
+
+    # Fast path: If topic already exists with cards and summary, return instantly (<50ms)
+    existing_topic = await topic_repo.get_by_query(session, query)
+    if existing_topic:
+        cards_db = await card_repo.list_for_topic(session, existing_topic.id, page=1, page_size=50)
+        summary = await _get_summary(session, existing_topic.id)
+        if cards_db and summary:
+            now = datetime.utcnow()
+            age_seconds = (now - existing_topic.updated_at).total_seconds() if existing_topic.updated_at else 999999.0
+            
+            # If older than 1 hour, refresh in background while returning cached results immediately
+            if age_seconds > 3600:
+                background_tasks.add_task(Backgroundrefresh, query)
+
+            await topic_repo.record_search(session, existing_topic)
+
+            cards = [
+                PulseCardSchema(
+                    id=c.id,
+                    topic=existing_topic.query,
+                    quote=c.quote,
+                    source=c.source,
+                    sentiment=c.sentiment,  # type: ignore[arg-type]
+                    theme=c.theme,
+                    language=c.language,
+                    source_url=c.source_url,
+                    engagement_count=c.engagement_count,
+                    published_at=c.published_at,
+                    display_label=c.display_label,
+                    created_at=c.created_at,
+                )
+                for c in cards_db
+            ]
+            breakdown = await _get_source_breakdown(session, existing_topic.id)
+            return SearchResponse(
+                topic=_topic_schema(existing_topic),
+                summary=_summary_schema(summary),
+                source_breakdown=breakdown,
+                cards=cards,
+                meta={
+                    "refreshed": False,
+                    "instant_cache": True,
+                    "age_seconds": round(age_seconds, 1),
+                },
+            )
+
+    # Cold path: Fetch live data
     try:
-        refresh_result = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
+        refresh_result = await aggregation.refresh_topic(session, query, language=language)
     except Exception as e:
-        logger.exception("refresh_topic failed for query=%r language=%r", req.query, req.language)
+        logger.exception("refresh_topic failed for query=%r language=%r", query, language)
         raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
 
     topic_id = refresh_result.topic_id
@@ -124,7 +177,8 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
         cards=cards,
         meta={
             "refreshed": True,
-            "language": (req.language or None),
+            "instant_cache": False,
+            "language": language,
             "partial": refresh_result.partial,
             "missing_sources": refresh_result.missing_sources,
             "cached_sources": refresh_result.cached_sources,
