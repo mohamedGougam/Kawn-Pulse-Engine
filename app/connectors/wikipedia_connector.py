@@ -42,8 +42,10 @@ class WikipediaConnector:
         }
         url = f"{self.BASE_URL}?{urllib.parse.urlencode(params)}"
 
+        # Wikimedia requires a descriptive User-Agent with contact info to prevent 403 Forbidden
+        ua = f"{settings.reddit_user_agent} (https://kawn.app; contact@kawn.app)"
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, headers={"User-Agent": settings.reddit_user_agent})
+            resp = await client.get(url, headers={"User-Agent": ua})
             resp.raise_for_status()
             data = resp.json()
 

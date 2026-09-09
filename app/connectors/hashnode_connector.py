@@ -60,7 +60,7 @@ class HashnodeConnector:
             "variables": {"slug": slug, "first": min(limit, 20)},
         }
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.post(
                 self.ENDPOINT,
                 json=payload,

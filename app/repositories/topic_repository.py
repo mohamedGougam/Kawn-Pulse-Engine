@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db_models import Topic
+
+logger = logging.getLogger("kawn.topics")
 
 
 class TopicRepository:
@@ -45,8 +48,12 @@ class TopicRepository:
         topic.search_count = (topic.search_count or 0) + 1
         topic.last_searched_at = datetime.utcnow()
         session.add(topic)
-        await session.commit()
-        await session.refresh(topic)
+        try:
+            await session.commit()
+            await session.refresh(topic)
+        except Exception:
+            await session.rollback()
+            logger.warning("Could not record search_count for topic=%r; skipped", topic.query, exc_info=True)
         return topic
 
     async def list_by_search_interest(self, session: AsyncSession, *, limit: int = 50) -> list[Topic]:

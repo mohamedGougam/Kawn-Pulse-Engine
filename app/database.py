@@ -52,6 +52,11 @@ if not IS_SQLITE:
         ASYNC_DATABASE_URL = urlunsplit(parts._replace(query=urlencode(query)))
         _connect_args["ssl"] = True
 
+    # Neon and other managed serverless Postgres instances use PgBouncer (as
+    # indicated by '-pooler' in the hostname). PgBouncer in transaction mode
+    # requires disabling asyncpg's prepared statement cache.
+    _connect_args["statement_cache_size"] = 0
+
     # Free/serverless Postgres (Neon, Render's own free tier, etc.) suspends
     # or drops idle connections after a period of inactivity — which on a
     # free-tier web dyno that itself spins down after ~15 min idle, easily
@@ -68,6 +73,9 @@ if not IS_SQLITE:
     # which has no server-side idle timeout to guard against.
     _engine_kwargs["pool_pre_ping"] = True
     _engine_kwargs["pool_recycle"] = 1800
+else:
+    _connect_args["timeout"] = 60.0
+    _connect_args["check_same_thread"] = False
 
 engine: AsyncEngine = create_async_engine(
     ASYNC_DATABASE_URL,
@@ -76,6 +84,17 @@ engine: AsyncEngine = create_async_engine(
     connect_args=_connect_args,
     **_engine_kwargs,
 )
+
+if IS_SQLITE:
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=60000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,
