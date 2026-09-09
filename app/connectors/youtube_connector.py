@@ -29,8 +29,15 @@ class YouTubeConnector:
         if language:
             url += f"&relevanceLanguage={urllib.parse.quote_plus(language)}"
 
+        import time
+        if getattr(self, "_quota_exhausted_until", 0) > time.time():
+            return []
+
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(url)
+            if resp.status_code == 429:
+                self._quota_exhausted_until = time.time() + 1800  # Pause for 30m
+                return []
             resp.raise_for_status()
             data = resp.json()
 

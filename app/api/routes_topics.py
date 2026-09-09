@@ -134,18 +134,31 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
     )
 
 
+import asyncio
 from pydantic import BaseModel
 
 class Bulkcardsrequest(BaseModel):
     topic_ids: list[str]
 
 
+_bg_refresh_semaphore = asyncio.Semaphore(2)
+_in_progress_bg_queries: set[str] = set()
+
+
 async def Backgroundrefresh(query: str):
-    async with get_session() as session:
-        try:
-            await aggregation.refresh_topic(session, query)
-        except Exception:
-            pass
+    norm_query = query.strip().lower()
+    if norm_query in _in_progress_bg_queries:
+        return
+    _in_progress_bg_queries.add(norm_query)
+    try:
+        async with _bg_refresh_semaphore:
+            async with get_session() as session:
+                try:
+                    await aggregation.refresh_topic(session, query, record_search=False)
+                except Exception:
+                    pass
+    finally:
+        _in_progress_bg_queries.discard(norm_query)
 
 
 @router.get("/explore-feed", response_model=list[PulseCardSchema])
@@ -159,19 +172,25 @@ async def Getexplorefeed(
     subjects = settings.Discover_subjects
     topics_db = []
     cold_start_subjects: list[str] = []
+    queued_count = 0
+
     for sub in subjects:
         topic = await topic_repo.get_by_query(session, sub)
         if not topic:
             try:
                 topic = await topic_repo.upsert(session, sub)
-                background_tasks.add_task(Backgroundrefresh, sub)
+                if queued_count < 2 and sub.strip().lower() not in _in_progress_bg_queries:
+                    background_tasks.add_task(Backgroundrefresh, sub)
+                    queued_count += 1
                 cold_start_subjects.append(sub)
             except Exception:
                 pass
         else:
             count = await card_repo.count_for_topic(session, topic.id)
             if count == 0:
-                background_tasks.add_task(Backgroundrefresh, sub)
+                if queued_count < 2 and sub.strip().lower() not in _in_progress_bg_queries:
+                    background_tasks.add_task(Backgroundrefresh, sub)
+                    queued_count += 1
                 cold_start_subjects.append(sub)
         if topic:
             topics_db.append(topic)
