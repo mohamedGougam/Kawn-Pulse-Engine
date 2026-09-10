@@ -27,13 +27,11 @@ class TopicRepository:
             existing.updated_at = now
             session.add(existing)
             await session.commit()
-            await session.refresh(existing)
             return existing
 
         topic = Topic(query=query, created_at=now, updated_at=now)
         session.add(topic)
         await session.commit()
-        await session.refresh(topic)
         return topic
 
     async def list_trending(self, session: AsyncSession, *, limit: int = 20) -> list[Topic]:
@@ -50,7 +48,6 @@ class TopicRepository:
         session.add(topic)
         try:
             await session.commit()
-            await session.refresh(topic)
         except Exception:
             await session.rollback()
             logger.warning("Could not record search_count for topic=%r; skipped", topic.query, exc_info=True)

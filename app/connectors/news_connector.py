@@ -92,7 +92,7 @@ class NewsRssConnector:
         # before the whole connector got cancelled -- firing them all at
         # once lets every feed race the same budget independently instead
         # of queueing behind each other.
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=3.0, follow_redirects=True) as client:
             results = await asyncio.gather(
                 *(
                     self._fetch_feed(client, url, topic, language, require_match=require_match)

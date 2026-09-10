@@ -22,6 +22,7 @@ class SentimentService:
             return
         self._ready = True
         try:
+            import torch  # noqa
             from transformers import pipeline  # type: ignore
 
             self._pipeline = pipeline("sentiment-analysis", model=settings.ai_sentiment_model)

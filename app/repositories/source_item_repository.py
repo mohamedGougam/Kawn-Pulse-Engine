@@ -18,13 +18,12 @@ class SourceItemRepository:
             return 0
 
         existing: set[tuple[str, str, str]] = set()
-        for tid in topic_ids:
-            res = await session.execute(
-                select(SourceItem.topic_id, SourceItem.source, SourceItem.source_url)
-                .where(SourceItem.topic_id == tid)
-            )
-            for row in res.all():
-                existing.add((row[0], row[1], row[2]))
+        res = await session.execute(
+            select(SourceItem.topic_id, SourceItem.source, SourceItem.source_url)
+            .where(SourceItem.topic_id.in_(topic_ids))
+        )
+        for row in res.all():
+            existing.add((row[0], row[1], row[2]))
 
         seen_in_batch: set[tuple[str, str, str]] = set()
         to_add: list[SourceItem] = []
@@ -35,11 +34,8 @@ class SourceItemRepository:
             seen_in_batch.add(key)
             to_add.append(it)
 
-        for it in to_add:
-            session.add(it)
-
         if to_add:
-            await session.commit()
+            session.add_all(to_add)
 
         return len(to_add)
 
@@ -59,11 +55,9 @@ class SourceItemRepository:
 
     async def delete_for_topic(self, session: AsyncSession, topic_id: str) -> int:
         res = await session.execute(delete(SourceItem).where(SourceItem.topic_id == topic_id))
-        await session.commit()
         return int(res.rowcount or 0)
 
     async def delete_older_than(self, session: AsyncSession, topic_id: str, cutoff: datetime) -> int:
-  ## items are being accumulated over time, adn with the 31 dasy cap , older than 31 days need to be deleted
         stmt = delete(SourceItem).where(
             SourceItem.topic_id == topic_id,
             or_(
@@ -72,5 +66,4 @@ class SourceItemRepository:
             ),
         )
         res = await session.execute(stmt)
-        await session.commit()
         return int(res.rowcount or 0)

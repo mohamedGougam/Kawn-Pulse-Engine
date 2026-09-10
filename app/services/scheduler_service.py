@@ -116,11 +116,10 @@ class SchedulerService:
         async def _refresh_one(topic: Topic) -> None:
             async with semaphore:
                 try:
-                    async with get_session() as s2:
-                        # Background-driven refreshes never count toward the
-                        # search-interest signal that feeds this same
-                        # priority queue.
-                        await self.aggregation.refresh_topic(s2, topic.query, record_search=False)
+                    # Background-driven refreshes never count toward the
+                    # search-interest signal that feeds this same
+                    # priority queue.
+                    await self.aggregation.refresh_topic(query=topic.query, record_search=False)
                 except Exception:
                     logger.warning("background refresh failed for topic=%r", topic.query, exc_info=True)
 

@@ -16,6 +16,7 @@ class SummarizationService:
             return
         self._ready = True
         try:
+            import torch  # noqa
             from transformers import pipeline  # type: ignore
 
             self._pipeline = pipeline("summarization", model=settings.ai_summary_model)

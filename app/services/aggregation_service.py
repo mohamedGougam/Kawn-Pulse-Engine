@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,30 +23,9 @@ from app.connectors.producthunt_connector import ProductHuntConnector
 from app.connectors.reddit_stream_connector import RedditStreamConnector
 from app.connectors.wikipedia_connector import WikipediaConnector
 from app.connectors.youtube_connector import YouTubeConnector
-
-# Active set matches the fast/heavy connector lists as specified:
-#   fast:  Bluesky, Reddit, Mastodon, YouTube, HackerNews, Wikipedia
-#          (X/Twitter has no connector -- no free streaming API available)
-#          Bluesky and Reddit are now firehose/stream-backed (see
-#          BlueskyFirehoseConnector / RedditStreamConnector) with the
-#          original poll-based connectors kept internally as a fallback --
-#          see app/streaming/ for the consumers and the always-on-process
-#          caveat that comes with them.
-#   heavy: Dev.to, News (RSS -- Google News/Bing/Al Jazeera feed templates
-#          via NEWS_RSS_FEEDS, plus fixed CNN/BBC/NYT/Al Jazeera section
-#          feeds and a Reuters-scoped Google News search -- see
-#          major_outlet_rss_feeds / reuters_rss_workaround_template),
-#          Hashnode
-#          (LinkedIn has no connector -- no free API available)
-#
-# Extras -- not on either originally-requested list, but fully wired in and
-# enabled: Discourse, Lobsters, Lemmy, PeerTube (no auth needed), and
-# ProductHunt (only fires if PRODUCTHUNT_ACCESS_TOKEN is set -- see
-# settings.producthunt_configured()). All 5 add real outbound HTTP calls to
-# every search's connector fanout, on top of the 9 already active -- see the
-# stability note in refresh_topic about connector_timeout_seconds /
-# search_fetch_budget_seconds if this pushes total search latency up.
-from app.models.db_models import PulseCard, SourceBreakdown, SourceItem, TopicSummary
+from app.database import get_session
+from app.models.db_models import PulseCard, SourceBreakdown, SourceItem, Topic, TopicSummary
+from app.models.schemas import SourceBreakdownItem
 from app.repositories.pulse_card_repository import PulseCardRepository
 from app.repositories.source_item_repository import SourceItemRepository
 from app.repositories.topic_repository import TopicRepository
@@ -65,22 +44,14 @@ logger = logging.getLogger("kawn.aggregation")
 @dataclass
 class RefreshResult:
     topic_id: str
-    # Sources with no live data AND no cache fallback this refresh — the
-    # visible signal for what used to be a silently-incomplete card set.
     missing_sources: list[str]
-    # Sources where live fetch failed/timed out/returned nothing, but a
-    # cached copy from a previous heavy fetch was used to backfill instead.
     cached_sources: list[str]
-    # source -> ISO timestamp the cached copy was written (only present for
-    # entries in `cached_sources` — live sources are fresh as of this
-    # request, so there's nothing meaningful to timestamp for them). Lets a
-    # client show e.g. "Bluesky results are from 4 hours ago" instead of
-    # just a generic "may be stale" note.
     source_freshness: dict[str, str]
-    # Sources whose connector.enabled() returned False — deliberately
-    # turned off, never attempted this round (not counted in
-    # missing_sources, and never backfilled from cache).
     disabled_sources: list[str]
+    topic: Topic | None = None
+    summary: TopicSummary | None = None
+    cards: list[PulseCard] = field(default_factory=list)
+    source_breakdown: list[SourceBreakdownItem] = field(default_factory=list)
 
     @property
     def partial(self) -> bool:
@@ -197,18 +168,15 @@ class AggregationService:
 
     async def refresh_topic(
         self,
-        session: AsyncSession,
-        query: str,
+        session: AsyncSession | None = None,
+        query: str = "",
         *,
         language: str | None = None,
         record_search: bool = True,
     ) -> RefreshResult:
-        topic = await self.topic_repo.upsert(session, query)
-        if record_search:
-            # Only real user-triggered refreshes (search, manual refresh)
-            # count toward the priority-queue interest signal — see
-            # TopicRepository.record_search.
-            await self.topic_repo.record_search(session, topic)
+        if isinstance(session, str):
+            query = session
+            session = None
 
         # Fetch from enabled connectors fully concurrently — no semaphore cap.
         # These used to be capped at max_concurrent_connectors (3) at a time,
@@ -266,7 +234,7 @@ class AggregationService:
         cache_task_by_source: dict[str, asyncio.Task] = {}
         if settings.r2_configured():
             cache_task_by_source = {
-                fallback_source: asyncio.create_task(self._read_cached_source(fallback_source, topic.query))
+                fallback_source: asyncio.create_task(self._read_cached_source(fallback_source, query))
                 for _, fallback_source in fetch_plan
                 if enabled_by_source.get(fallback_source, True)
             }
@@ -315,7 +283,7 @@ class AggregationService:
         # Deliberately only the *live* items, not cache-fallback items added
         # below — otherwise a stale cache entry would keep re-writing itself
         # with a fresh `fetched_at`, making it look newer than it is.
-        asyncio.create_task(self._persist_heavy_cache(topic.query, live_cleaned, connector_by_source_url))
+        asyncio.create_task(self._persist_heavy_cache(query, live_cleaned, connector_by_source_url))
 
         # Merge in cached data for any *enabled* source whose live fetch came
         # back empty (timed out, errored, or genuinely had nothing this
@@ -352,7 +320,7 @@ class AggregationService:
                     except Exception as e:
                         logger.warning("heavy cache read failed for source=%s topic=%r: %s", source, query, e)
 
-                cache_items = _normalized_items_from_cache_payload(source, topic.query, cache_payload, limit=per)
+                cache_items = _normalized_items_from_cache_payload(source, query, cache_payload, limit=per)
                 added_any = False
                 for item in cache_items:
                     key = _dedup_key(item)
@@ -376,6 +344,46 @@ class AggregationService:
         # (live succeeded) are still running in the background — let them
         # finish naturally rather than cancelling mid-flight; they're cheap
         # and cancelling a completed-or-nearly-complete GET buys nothing.
+
+        if session is not None:
+            return await self._persist_refresh_data(
+                session,
+                query,
+                cleaned,
+                record_search=record_search,
+                missing_sources=missing_sources,
+                cached_sources=cached_sources,
+                source_freshness=source_freshness,
+                disabled_sources=disabled_sources,
+            )
+        else:
+            async with get_session() as s:
+                return await self._persist_refresh_data(
+                    s,
+                    query,
+                    cleaned,
+                    record_search=record_search,
+                    missing_sources=missing_sources,
+                    cached_sources=cached_sources,
+                    source_freshness=source_freshness,
+                    disabled_sources=disabled_sources,
+                )
+
+    async def _persist_refresh_data(
+        self,
+        session: AsyncSession,
+        query: str,
+        cleaned: list[NormalizedItem],
+        *,
+        record_search: bool,
+        missing_sources: list[str],
+        cached_sources: list[str],
+        source_freshness: dict[str, str],
+        disabled_sources: list[str],
+    ) -> RefreshResult:
+        topic = await self.topic_repo.upsert(session, query)
+        if record_search:
+            await self.topic_repo.record_search(session, topic)
 
         # Store source items (ignore duplicates).
         db_items = [
@@ -487,7 +495,7 @@ class AggregationService:
         # Upsert per-source breakdown
         item_counts = await self.source_repo.count_by_source(session, topic.id)
         card_counts = await self.card_repo.count_by_source(session, topic.id)
-        await _upsert_source_breakdown(session, topic.id, item_counts, card_counts)
+        breakdown_items = await _upsert_source_breakdown(session, topic.id, item_counts, card_counts)
 
         # Touch topic timestamp
         topic.updated_at = datetime.utcnow()
@@ -496,6 +504,10 @@ class AggregationService:
 
         return RefreshResult(
             topic_id=topic.id,
+            topic=topic,
+            summary=summary,
+            cards=cards,
+            source_breakdown=breakdown_items,
             missing_sources=missing_sources,
             cached_sources=cached_sources,
             source_freshness=source_freshness,
@@ -762,8 +774,6 @@ async def _upsert_summary(
         existing.themes_json = themes_json
         existing.updated_at = now
         session.add(existing)
-        await session.commit()
-        await session.refresh(existing)
         return existing
 
     ts = TopicSummary(
@@ -778,8 +788,6 @@ async def _upsert_summary(
         updated_at=now,
     )
     session.add(ts)
-    await session.commit()
-    await session.refresh(ts)
     return ts
 
 
@@ -788,34 +796,37 @@ async def _upsert_source_breakdown(
     topic_id: str,
     item_counts: dict[str, int],
     card_counts: dict[str, int],
-) -> None:
-    from sqlalchemy import select
+) -> list[SourceBreakdownItem]:
+    from sqlalchemy import delete
+    from app.models.db_models import SourceBreakdown
+    from app.models.schemas import SourceBreakdownItem
 
     sources = set(item_counts.keys()) | set(card_counts.keys()) | {
         "Reddit", "YouTube", "News", "Bluesky", "HackerNews", "Lemmy", "Mastodon",
         "DevTo", "Hashnode", "Lobsters", "PeerTube", "ProductHunt", "Wikipedia", "Discourse",
     }
     now = datetime.utcnow()
-    for src in sources:
-        res = await session.execute(
-            select(SourceBreakdown).where(SourceBreakdown.topic_id == topic_id).where(SourceBreakdown.source == src)
-        )
-        existing = res.scalar_one_or_none()
-        if existing:
-            existing.item_count = int(item_counts.get(src, 0))
-            existing.card_count = int(card_counts.get(src, 0))
-            existing.updated_at = now
-            session.add(existing)
-            continue
 
-        session.add(
-            SourceBreakdown(
-                topic_id=topic_id,
-                source=src,
-                item_count=int(item_counts.get(src, 0)),
-                card_count=int(card_counts.get(src, 0)),
-                updated_at=now,
-            )
-        )
+    # Clean delete of previous breakdown for this topic, avoiding any row-level update lock contention
+    await session.execute(delete(SourceBreakdown).where(SourceBreakdown.topic_id == topic_id))
 
-    await session.commit()
+    to_add = [
+        SourceBreakdown(
+            topic_id=topic_id,
+            source=src,
+            item_count=int(item_counts.get(src, 0)),
+            card_count=int(card_counts.get(src, 0)),
+            updated_at=now,
+        )
+        for src in sources
+    ]
+    session.add_all(to_add)
+
+    return [
+        SourceBreakdownItem(
+            source=sb.source,
+            item_count=sb.item_count,
+            card_count=sb.card_count,
+        )
+        for sb in to_add
+    ]

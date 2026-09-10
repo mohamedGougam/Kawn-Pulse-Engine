@@ -8,9 +8,8 @@ from app.models.db_models import PulseCard
 
 class PulseCardRepository:
     async def bulk_create(self, session: AsyncSession, cards: list[PulseCard]) -> int:
-        for c in cards:
-            session.add(c)
-        await session.commit()
+        if cards:
+            session.add_all(cards)
         return len(cards)
 
     async def list_for_topic(
@@ -48,7 +47,6 @@ class PulseCardRepository:
 
     async def delete_for_topic(self, session: AsyncSession, topic_id: str) -> int:
         res = await session.execute(delete(PulseCard).where(PulseCard.topic_id == topic_id))
-        await session.commit()
         return int(res.rowcount or 0)
 
     async def get_by_id(self, session: AsyncSession, card_id: str) -> PulseCard | None:

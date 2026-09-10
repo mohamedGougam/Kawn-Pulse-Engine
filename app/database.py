@@ -56,17 +56,15 @@ if not IS_SQLITE:
     # indicated by '-pooler' in the hostname). PgBouncer in transaction mode
     # requires disabling asyncpg's prepared statement cache.
     _connect_args["statement_cache_size"] = 0
+    _connect_args["server_settings"] = {
+        "idle_in_transaction_session_timeout": "5000",
+    }
 
-    # With serverless Postgres & PgBouncer (such as Neon's pooler endpoint),
-    # connection pooling is already handled on the server side by PgBouncer.
-    # SQLAlchemy's default QueuePool (size 5, overflow 10) creates an artificial
-    # client-side bottleneck where concurrent requests time out after 30 seconds
-    # (QueuePool limit reached). Using NullPool delegates pooling to PgBouncer
-    # and eliminates client-side connection checkout timeouts entirely.
-    from sqlalchemy.pool import NullPool
-    _engine_kwargs["poolclass"] = NullPool
+    _engine_kwargs["pool_size"] = 10
+    _engine_kwargs["max_overflow"] = 10
+    _engine_kwargs["pool_timeout"] = 15.0
+    _engine_kwargs["pool_recycle"] = 300
     _engine_kwargs["pool_pre_ping"] = True
-    _engine_kwargs["pool_recycle"] = 1800
 else:
     _connect_args["timeout"] = 60.0
     _connect_args["check_same_thread"] = False
@@ -158,5 +156,12 @@ async def init_db() -> None:
 @asynccontextmanager
 async def get_session() -> AsyncSession:
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 

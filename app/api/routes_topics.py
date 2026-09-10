@@ -30,6 +30,20 @@ aggregation = AggregationService()
 ai = AIService()
 
 
+import asyncio
+
+_query_locks: dict[str, asyncio.Lock] = {}
+_query_locks_guard = asyncio.Lock()
+
+
+async def _get_query_lock(query: str) -> asyncio.Lock:
+    norm = query.strip().lower()
+    async with _query_locks_guard:
+        if norm not in _query_locks:
+            _query_locks[norm] = asyncio.Lock()
+        return _query_locks[norm]
+
+
 async def _session_dep() -> AsyncSession:
     async with get_session() as s:
         yield s
@@ -78,7 +92,6 @@ def _summary_schema(s: TopicSummaryDB) -> TopicSummarySchema:
 async def search_topic(
     req: SearchRequest,
     background_tasks: BackgroundTasks,
-    session: AsyncSession = Depends(_session_dep),
 ) -> SearchResponse:
     from datetime import datetime
     import logging
@@ -87,69 +100,82 @@ async def search_topic(
     query = req.query.strip()
     language = req.language or None
 
-    # Fast path: If topic already exists with cards and summary, return instantly (<50ms)
-    existing_topic = await topic_repo.get_by_query(session, query)
-    if existing_topic:
-        cards_db = await card_repo.list_for_topic(session, existing_topic.id, page=1, page_size=50)
-        summary = await _get_summary(session, existing_topic.id)
-        if cards_db and summary:
-            now = datetime.utcnow()
-            age_seconds = (now - existing_topic.updated_at).total_seconds() if existing_topic.updated_at else 999999.0
-            
-            # If older than 1 hour, refresh in background while returning cached results immediately
-            if age_seconds > 3600:
-                background_tasks.add_task(Backgroundrefresh, query)
+    query_lock = await _get_query_lock(query)
+    async with query_lock:
+        # Fast path: If topic already exists with cards and summary, return instantly (<50ms)
+        async with get_session() as session:
+            existing_topic = await topic_repo.get_by_query(session, query)
+            if existing_topic:
+                cards_db = await card_repo.list_for_topic(session, existing_topic.id, page=1, page_size=50)
+                summary = await _get_summary(session, existing_topic.id)
+                if cards_db and summary:
+                    now = datetime.utcnow()
+                    age_seconds = (now - existing_topic.updated_at).total_seconds() if existing_topic.updated_at else 999999.0
+                    
+                    # If older than 1 hour, refresh in background while returning cached results immediately
+                    if age_seconds > 3600:
+                        background_tasks.add_task(Backgroundrefresh, query)
 
-            await topic_repo.record_search(session, existing_topic)
+                    await topic_repo.record_search(session, existing_topic)
 
-            cards = [
-                PulseCardSchema(
-                    id=c.id,
-                    topic=existing_topic.query,
-                    quote=c.quote,
-                    source=c.source,
-                    sentiment=c.sentiment,  # type: ignore[arg-type]
-                    theme=c.theme,
-                    language=c.language,
-                    source_url=c.source_url,
-                    engagement_count=c.engagement_count,
-                    published_at=c.published_at,
-                    display_label=c.display_label,
-                    created_at=c.created_at,
-                )
-                for c in cards_db
-            ]
-            breakdown = await _get_source_breakdown(session, existing_topic.id)
-            return SearchResponse(
-                topic=_topic_schema(existing_topic),
-                summary=_summary_schema(summary),
-                source_breakdown=breakdown,
-                cards=cards,
-                meta={
-                    "refreshed": False,
-                    "instant_cache": True,
-                    "age_seconds": round(age_seconds, 1),
-                },
-            )
+                    cards = [
+                        PulseCardSchema(
+                            id=c.id,
+                            topic=existing_topic.query,
+                            quote=c.quote,
+                            source=c.source,
+                            sentiment=c.sentiment,  # type: ignore[arg-type]
+                            theme=c.theme,
+                            language=c.language,
+                            source_url=c.source_url,
+                            engagement_count=c.engagement_count,
+                            published_at=c.published_at,
+                            display_label=c.display_label,
+                            created_at=c.created_at,
+                        )
+                        for c in cards_db
+                    ]
+                    breakdown = await _get_source_breakdown(session, existing_topic.id)
+                    return SearchResponse(
+                        topic=_topic_schema(existing_topic),
+                        summary=_summary_schema(summary),
+                        source_breakdown=breakdown,
+                        cards=cards,
+                        meta={
+                            "refreshed": False,
+                            "instant_cache": True,
+                            "age_seconds": round(age_seconds, 1),
+                        },
+                    )
 
-    # Cold path: Fetch live data
-    try:
-        refresh_result = await aggregation.refresh_topic(session, query, language=language)
-    except Exception as e:
-        logger.exception("refresh_topic failed for query=%r language=%r", query, language)
-        raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
+        # Cold path: Fetch live data without holding any DB connection during the network fetch
+        try:
+            refresh_result = await aggregation.refresh_topic(query=query, language=language)
+        except Exception as e:
+            logger.exception("refresh_topic failed for query=%r language=%r", query, language)
+            raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
 
     topic_id = refresh_result.topic_id
 
-    topic = await topic_repo.get_by_id(session, topic_id)
+    topic = refresh_result.topic
+    if not topic:
+        async with get_session() as session:
+            topic = await topic_repo.get_by_id(session, topic_id)
     if not topic:
         raise HTTPException(status_code=500, detail="Topic not created")
 
-    summary = await _get_summary(session, topic_id)
+    summary = refresh_result.summary
+    if not summary:
+        async with get_session() as session:
+            summary = await _get_summary(session, topic_id)
     if not summary:
         raise HTTPException(status_code=500, detail="Summary not created")
 
-    cards_db = await card_repo.list_for_topic(session, topic_id, page=1, page_size=50)
+    cards_objs = refresh_result.cards
+    if not cards_objs:
+        async with get_session() as session:
+            cards_objs = await card_repo.list_for_topic(session, topic_id, page=1, page_size=50)
+
     cards = [
         PulseCardSchema(
             id=c.id,
@@ -165,10 +191,13 @@ async def search_topic(
             display_label=c.display_label,
             created_at=c.created_at,
         )
-        for c in cards_db
+        for c in cards_objs
     ]
 
-    breakdown = await _get_source_breakdown(session, topic_id)
+    breakdown = refresh_result.source_breakdown
+    if not breakdown:
+        async with get_session() as session:
+            breakdown = await _get_source_breakdown(session, topic_id)
 
     return SearchResponse(
         topic=_topic_schema(topic),
@@ -205,10 +234,13 @@ async def Backgroundrefresh(query: str):
         return
     _in_progress_bg_queries.add(norm_query)
     try:
-        async with _bg_refresh_semaphore:
-            async with get_session() as session:
+        query_lock = await _get_query_lock(query)
+        if query_lock.locked():
+            return
+        async with query_lock:
+            async with _bg_refresh_semaphore:
                 try:
-                    await aggregation.refresh_topic(session, query, record_search=False)
+                    await aggregation.refresh_topic(query=query, record_search=False)
                 except Exception:
                     pass
     finally:
@@ -394,7 +426,7 @@ async def refresh(topic_id: str, session: AsyncSession = Depends(_session_dep)) 
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    await aggregation.refresh_topic(session, topic.query)
+    await aggregation.refresh_topic(query=topic.query)
     return {"status": "ok", "topic_id": topic_id, "refreshed": True}
 
 

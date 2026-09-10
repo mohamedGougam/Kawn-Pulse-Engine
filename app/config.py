@@ -63,11 +63,11 @@ class Settings(BaseSettings):
     # routinely ran past 3s and got cancelled outright by asyncio.wait_for,
     # leaving only the single lightweight Lemmy endpoint reliably finishing
     # in time. Can still be overridden via CONNECTOR_TIMEOUT_SECONDS.
-    connector_timeout_seconds: float = 4.0
+    connector_timeout_seconds: float = 3.0
     # Overall budget for a live/search-triggered refresh. Once this elapses,
     # aggregation returns whatever connectors have finished instead of waiting
     # for stragglers.
-    search_fetch_budget_seconds: float = 5.0
+    search_fetch_budget_seconds: float = 3.5
 
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only
@@ -117,7 +117,6 @@ class Settings(BaseSettings):
         "http://rss.cnn.com/rss/edition_world.rss,"
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml,"
         "https://www.aljazeera.com/xml/rss/all.xml,"
-        "https://english.alarabiya.net/feed/flipboard/en.xml,"
         "https://feeds.feedburner.com/euronews/en/home/"
     )
     reuters_rss_workaround_template: str = "https://news.google.com/rss/search?q={query}+site:reuters.com"
