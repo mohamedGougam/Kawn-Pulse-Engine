@@ -80,6 +80,10 @@ class TopicSummary(BaseModel):
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=160)
     language: Optional[str] = Field(default=None, max_length=8)
+    # ISO 3166-1 alpha-2 (e.g. "FR"), the caller's resolved locale. Used only
+    # to gate regional outlets like France24 (see app.services.outlet_registry)
+    # — global outlets and every non-curated source are unaffected by it.
+    country: Optional[str] = Field(default=None, max_length=2)
 
 
 class SearchResponse(BaseModel):

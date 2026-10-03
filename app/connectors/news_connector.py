@@ -45,6 +45,7 @@ _OUTLET_NAME_BY_URL_FRAGMENT: list[tuple[str, str]] = [
     ("alarabiya.net", "Al Arabiya"),
     ("euronews", "Euronews"),
     ("reuters.com", "Reuters"),
+    ("france24.com", "France24"),
 ]
 
 

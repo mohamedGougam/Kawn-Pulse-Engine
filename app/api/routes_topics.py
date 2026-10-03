@@ -18,6 +18,7 @@ from app.models.schemas import (
     TopicSummary as TopicSummarySchema,
 )
 from app.repositories.pulse_card_repository import PulseCardRepository
+from app.services.outlet_registry import filter_visible_cards
 from app.repositories.topic_repository import TopicRepository
 from app.services.aggregation_service import AggregationService
 from app.services.ai_service import AIService
@@ -193,6 +194,7 @@ async def search_topic(
         )
         for c in cards_objs
     ]
+    cards = filter_visible_cards(cards, req.country)
 
     breakdown = refresh_result.source_breakdown
     if not breakdown:
@@ -250,6 +252,7 @@ async def Backgroundrefresh(query: str):
 @router.get("/explore-feed", response_model=list[PulseCardSchema])
 async def Getexplorefeed(
     background_tasks: BackgroundTasks,
+    country: str | None = Query(default=None, max_length=2),
     session: AsyncSession = Depends(_session_dep)
 ) -> list[PulseCardSchema]:
     from app.config import settings
@@ -338,12 +341,17 @@ async def Getexplorefeed(
         for c in cards_db
     ]
     results.extend(preview_results)
+    results = filter_visible_cards(results, country)
     random.shuffle(results)
     return results
 
 
 @router.post("/bulk-cards", response_model=list[PulseCardSchema])
-async def Getbulkcards(req: Bulkcardsrequest, session: AsyncSession = Depends(_session_dep)) -> list[PulseCardSchema]:
+async def Getbulkcards(
+    req: Bulkcardsrequest,
+    country: str | None = Query(default=None, max_length=2),
+    session: AsyncSession = Depends(_session_dep),
+) -> list[PulseCardSchema]:
     if not req.topic_ids:
         return []
 
@@ -356,7 +364,7 @@ async def Getbulkcards(req: Bulkcardsrequest, session: AsyncSession = Depends(_s
     topic_map = {t.id: t.query for t in topics_db}
     cards_db = await card_repo.Listcardsformultipletopics(session, req.topic_ids, limit_per_topic=5)
 
-    return [
+    cards = [
         PulseCardSchema(
             id=c.id,
             topic=topic_map.get(c.topic_id, "General"),
@@ -373,20 +381,7 @@ async def Getbulkcards(req: Bulkcardsrequest, session: AsyncSession = Depends(_s
         )
         for c in cards_db
     ]
-
-
-@router.get("/trending", response_model=list[TopicSchema])
-async def trending(session: AsyncSession = Depends(_session_dep)) -> list[TopicSchema]:
-    topics = await topic_repo.list_trending(session, limit=25)
-    return [_topic_schema(t) for t in topics]
-
-
-@router.get("/{topic_id}", response_model=TopicSchema)
-async def get_topic(topic_id: str, session: AsyncSession = Depends(_session_dep)) -> TopicSchema:
-    topic = await topic_repo.get_by_id(session, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
-    return _topic_schema(topic)
+    return filter_visible_cards(cards, country)
 
 
 @router.get("/{topic_id}/cards", response_model=list[PulseCardSchema])
@@ -394,6 +389,7 @@ async def get_cards(
     topic_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    country: str | None = Query(default=None, max_length=2),
     session: AsyncSession = Depends(_session_dep),
 ) -> list[PulseCardSchema]:
     topic = await topic_repo.get_by_id(session, topic_id)
@@ -401,7 +397,7 @@ async def get_cards(
         raise HTTPException(status_code=404, detail="Topic not found")
 
     cards_db = await card_repo.list_for_topic(session, topic_id, page=page, page_size=page_size)
-    return [
+    cards = [
         PulseCardSchema(
             id=c.id,
             topic=topic.query,
@@ -418,6 +414,21 @@ async def get_cards(
         )
         for c in cards_db
     ]
+    return filter_visible_cards(cards, country)
+
+
+@router.get("/trending", response_model=list[TopicSchema])
+async def trending(session: AsyncSession = Depends(_session_dep)) -> list[TopicSchema]:
+    topics = await topic_repo.list_trending(session, limit=25)
+    return [_topic_schema(t) for t in topics]
+
+
+@router.get("/{topic_id}", response_model=TopicSchema)
+async def get_topic(topic_id: str, session: AsyncSession = Depends(_session_dep)) -> TopicSchema:
+    topic = await topic_repo.get_by_id(session, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return _topic_schema(topic)
 
 
 @router.post("/{topic_id}/refresh")

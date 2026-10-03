@@ -32,7 +32,12 @@ from app.repositories.topic_repository import TopicRepository
 from app.services.ai_service import AIService
 from app.services.cleaning_service import CleaningService
 from app.services.normalization_service import NormalizationService, NormalizedItem
-from app.services.pulse_card_service import PulseCardService, connector_family_for_source, display_label_for_source
+from app.services.pulse_card_service import (
+    _NEWS_OUTLET_NAMES,
+    PulseCardService,
+    connector_family_for_source,
+    display_label_for_source,
+)
 from app.storage.object_store import ObjectStoreUnavailable, object_store
 from app.utils.date_utils import parse_datetime
 from app.utils.text_utils import best_sentence, clean_text, is_low_quality, trim_text
@@ -416,7 +421,17 @@ class AggregationService:
         # refreshes crowds sources with a fixed, static result set (Wikipedia,
         # Discourse, ProductHunt, etc.) out of the window entirely — even
         # though those items are still well within the freshness window.
-        raw_pool = await self.source_repo.list_for_topic(session, topic.id, limit=2000)
+        # The per-source cap is applied in SQL (ROW_NUMBER per connector
+        # family) so only the rows actually used are loaded, instead of
+        # pulling up to 2000 full rows per topic into memory and trimming
+        # them in Python. _balance_by_source below is kept as a cheap
+        # no-op safety net that also guarantees the final ordering.
+        raw_pool = await self.source_repo.list_balanced_for_topic(
+            session,
+            topic.id,
+            per_source_cap=settings.max_source_items_per_connector,
+            news_outlet_names=_NEWS_OUTLET_NAMES,
+        )
         all_items = _balance_by_source(raw_pool, per_source_cap=settings.max_source_items_per_connector)
         ai_texts = [(i.text or i.title or "") for i in all_items if (i.text or i.title)]
 

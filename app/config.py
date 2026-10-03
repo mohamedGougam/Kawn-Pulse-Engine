@@ -112,12 +112,20 @@ class Settings(BaseSettings):
     # Reuters discontinued its public RSS in 2020 and still has none as of
     # 2026 — routed through Reuters-scoped Google News search instead of a
     # dead feed URL.
+    # France24 added alongside the existing global outlets above: it's
+    # fetched into the same shared corpus as everything else, and scoped to
+    # regional-only visibility via app.services.outlet_registry instead of
+    # being fetched differently — see that module for which countries see it.
     major_outlet_rss_feeds: str = (
         "https://feeds.bbci.co.uk/news/world/rss.xml,"
         "http://rss.cnn.com/rss/edition_world.rss,"
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml,"
         "https://www.aljazeera.com/xml/rss/all.xml,"
-        "https://feeds.feedburner.com/euronews/en/home/"
+
+        "https://english.alarabiya.net/feed/flipboard/en.xml,"
+        "https://feeds.feedburner.com/euronews/en/home/,"
+        "https://www.france24.com/fr/rss"
+    
     )
     reuters_rss_workaround_template: str = "https://news.google.com/rss/search?q={query}+site:reuters.com"
 
@@ -186,7 +194,11 @@ class Settings(BaseSettings):
     # long enough to overlap the next tick even with the tick-lock in place.
     background_batch_size: int = 6
 
-    source_freshness_days: int = 31  ## condition for fetching only new info (31days cap) 
+    # Retention window for stored source items. Was 31 days, which let each
+    # topic's rows pile up for a full month before any pruning caught up.
+    # Cards only draw ~35 items per source, so 14 days is plenty. Override
+    # with SOURCE_FRESHNESS_DAYS.
+    source_freshness_days: int = 14
 
 
     # AI

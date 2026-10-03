@@ -22,7 +22,15 @@ class CardDraft:
     display_label: str
 
 
-_NEWS_OUTLET_NAMES = {"news", "bbc", "cnn", "nyt", "al jazeera", "al arabiya", "euronews", "reuters"}
+_NEWS_OUTLET_NAMES = {
+    "news", "bbc", "cnn", "nyt", "al jazeera", "al arabiya", "euronews", "reuters",
+    # France24 (app/services/outlet_registry.py) shares NewsRssConnector with
+    # the other fixed outlets above and must share their capping family here
+    # too, or it would wrongly get its own separate
+    # max_source_items_per_connector allotment instead of competing for the
+    # same shared "News" pool - inconsistent with how it's fetched.
+    "france24",
+}
 
 
 def connector_family_for_source(source: str) -> str:
