@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers 1 --bind 0.0.0.0:$PORT --max-requests 500 --max-requests-jitter 50 --timeout 120 --graceful-timeout 30
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -14,6 +14,12 @@ services:
       # Hashnode need no keys; Reddit/YouTube need the creds below) are
       # now wired into fetch_plan, so this needs to be false for them to
       # actually run.
+      # Keeps glibc from spawning many malloc arenas, which fragments and
+      # inflates RSS in long-lived Python processes on a 512 MB instance.
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: SOURCE_FRESHNESS_DAYS
+        value: "14"
       - key: ENABLE_MOCK_DATA
         value: "false"
       # Free web services have no persistent disk — /tmp is wiped on every
@@ -27,6 +33,9 @@ services:
       # while asleep though — see the cron-tick endpoint below for that gap.
       - key: SCHEDULER_ENABLED
         value: "true"
+      # Reddit wants "<platform>:<app ID>:<version> (by /u/<username>)" and
+      # throttles generic User-Agents harder. Change this in the dashboard to
+      # include your real Reddit username.
       - key: REDDIT_USER_AGENT
         value: KawnPulseEngine/1.0
       - key: NEWS_RSS_FEEDS
@@ -36,6 +45,12 @@ services:
       - key: REDDIT_CLIENT_SECRET
         sync: false
       - key: YOUTUBE_API_KEY
+        sync: false
+      # Bluesky post search needs a logged-in session (anonymous calls get
+      # 403). Use an *app password* from Settings > App Passwords.
+      - key: BLUESKY_HANDLE
+        sync: false
+      - key: BLUESKY_APP_PASSWORD
         sync: false
       # Cloudflare R2 — heavy-fetch JSON cache (/sources/<source>/<topic>.json)
       - key: R2_ACCOUNT_ID

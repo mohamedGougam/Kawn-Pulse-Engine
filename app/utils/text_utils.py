@@ -127,6 +127,13 @@ def _significant_tokens(topic: str) -> list[str]:
     return significant or tokens
 
 
+def significant_tokens(topic: str) -> list[str]:
+    """Public name for the tokenizer topic_matches() uses, so connectors that
+    need to turn a topic into search terms (e.g. Mastodon hashtags) split it
+    exactly the way relevance matching does."""
+    return _significant_tokens(topic)
+
+
 def topic_matches(topic: str, text: str, *, min_token_ratio: float = 0.5) -> bool:
     """Loose relevance check used to filter streamed posts / RSS entries
     that weren't fetched by a per-topic query in the first place (Bluesky

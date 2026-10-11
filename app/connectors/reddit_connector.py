@@ -10,6 +10,7 @@ import httpx
 from app.config import settings
 from app.connectors.base import NormalizedRawItem
 from app.utils.date_utils import utcnow
+from app.utils.http_errors import ConnectorUnavailable
 from app.utils.text_utils import normalize_ws
 
 # Reddit's client_credentials tokens are typically valid for ~1 hour, but
@@ -25,6 +26,22 @@ _token_lock = asyncio.Lock()
 _cached_token: str | None = None
 _cached_token_expires_at: float = 0.0
 _TOKEN_REFRESH_SLACK_SECONDS = 60.0
+
+# A rejected credential used to be swallowed (the function returned None and
+# fetch() returned []), so wrong/unapproved Reddit credentials were
+# indistinguishable from "no posts about this topic". It now raises so the
+# failure is visible in logs and /api/sources/health, and remembers the
+# rejection briefly so bad credentials aren't re-sent on every single search.
+_auth_failed_until: float = 0.0
+_auth_failed_message: str = ""
+_AUTH_RETRY_COOLDOWN_SECONDS = 60.0
+
+
+def reset_token_cache() -> None:
+    """Test helper."""
+    global _cached_token, _cached_token_expires_at, _auth_failed_until, _auth_failed_message
+    _cached_token, _cached_token_expires_at = None, 0.0
+    _auth_failed_until, _auth_failed_message = 0.0, ""
 
 
 class RedditConnector:
@@ -98,7 +115,7 @@ class RedditConnector:
 
 
 async def _get_token() -> str | None:
-    global _cached_token, _cached_token_expires_at
+    global _cached_token, _cached_token_expires_at, _auth_failed_until, _auth_failed_message
 
     if not settings.reddit_configured():
         return None
@@ -114,6 +131,9 @@ async def _get_token() -> str | None:
         # already refreshed it while we were waiting.
         if _cached_token and time.monotonic() < _cached_token_expires_at:
             return _cached_token
+
+        if time.monotonic() < _auth_failed_until:
+            raise ConnectorUnavailable(_auth_failed_message)
 
         auth = f"{settings.reddit_client_id}:{settings.reddit_client_secret}".encode("utf-8")
         basic = base64.b64encode(auth).decode("ascii")
@@ -131,12 +151,24 @@ async def _get_token() -> str | None:
                 payload = resp.json()
                 token = payload.get("access_token")
                 expires_in = float(payload.get("expires_in") or 0)
-                if token:
-                    _cached_token = token
-                    _cached_token_expires_at = time.monotonic() + max(0.0, expires_in - _TOKEN_REFRESH_SLACK_SECONDS)
+                if not token:
+                    raise ValueError("Reddit token response had no access_token")
+                _cached_token = token
+                _cached_token_expires_at = time.monotonic() + max(0.0, expires_in - _TOKEN_REFRESH_SLACK_SECONDS)
                 return token
+            except httpx.HTTPStatusError as e:
+                _cached_token = None
+                _cached_token_expires_at = 0.0
+                if e.response.status_code in (400, 401, 403):
+                    _auth_failed_until = time.monotonic() + _AUTH_RETRY_COOLDOWN_SECONDS
+                    _auth_failed_message = (
+                        f"Reddit rejected the credentials (HTTP {e.response.status_code}). Check REDDIT_CLIENT_ID / "
+                        "REDDIT_CLIENT_SECRET; new Reddit API apps need approval under the Responsible Builder "
+                        "Policy before they work. Not retrying for a minute."
+                    )
+                raise
             except Exception:
                 _cached_token = None
                 _cached_token_expires_at = 0.0
-                return None
+                raise
 

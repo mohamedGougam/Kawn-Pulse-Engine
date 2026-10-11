@@ -96,7 +96,37 @@ Response (shape):
 
 ### Source connector status
 
-`GET /api/sources/status`
+`GET /api/sources/status` - configuration view: which sources are enabled and, if not, why
+(for example "REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are not set").
+
+### Is a source actually working?
+
+A source that is "enabled" can still return nothing for a reason that isn't visible from config:
+rejected credentials, an exhausted quota, a blocked IP, or a changed response format. Both of these
+need the `X-Cron-Secret` header (same value as `CRON_HEARTBEAT_SECRET`).
+
+`GET /api/sources/health` - what happened the last time each source was called by real traffic
+(status, item count, latency, last error, consecutive failures). Costs nothing. Empty until sources
+have been called since the last restart.
+
+`GET /api/sources/diagnostics?topic=bitcoin&only=Reddit,Bluesky` - calls each source once and
+reports `disabled` (with the reason), `ok`, `empty`, `timeout` or `error` (with a classified,
+credential-safe message and a hint). **This spends quota** (a YouTube probe costs 100 units), so use
+`only=` to probe just the source you're debugging.
+
+```
+curl -H "X-Cron-Secret: $CRON_HEARTBEAT_SECRET" \
+  "https://<your-engine>/api/sources/diagnostics?only=Reddit,Bluesky,Mastodon"
+```
+
+### Credentials the social sources need
+
+| Source | Needs |
+|---|---|
+| Reddit | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, and a `REDDIT_USER_AGENT` like `web:kawn-pulse-engine:1.0 (by /u/yourname)`. New Reddit API apps need approval (Responsible Builder Policy). |
+| Bluesky | `BLUESKY_HANDLE` and `BLUESKY_APP_PASSWORD` (an *app password*, not the account password). Anonymous post search is blocked by Bluesky. |
+| YouTube | `YOUTUBE_API_KEY`. Each search costs 100 of the 10,000 daily quota units. |
+| Mastodon, Lemmy, PeerTube | Nothing (public endpoints). |
 
 ## Project structure
 

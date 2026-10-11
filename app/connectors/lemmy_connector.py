@@ -32,7 +32,17 @@ class LemmyConnector:
             resp.raise_for_status()
             data = resp.json()
 
-        posts = data.get("posts") or []
+        # Lemmy 0.19 returns {"posts": [...]}. Lemmy 1.0 reworked search into
+        # a combined result list ("results") and its release notes say the
+        # v3 search endpoint is not fully backwards compatible. Accept both,
+        # and if it's neither, fail loudly - quietly returning [] here would
+        # make a response-format change look like "no posts about this topic".
+        posts = data.get("posts")
+        if posts is None:
+            results = data.get("results")
+            if not isinstance(results, list):
+                raise ValueError(f"unrecognized Lemmy search response; top-level keys: {sorted(data)[:8]}")
+            posts = [r for r in results if isinstance(r, dict) and isinstance(r.get("post"), dict)]
         items: list[NormalizedRawItem] = []
 
         for p in posts[:limit]:
@@ -60,7 +70,7 @@ class LemmyConnector:
                     title=title or None,
                     text=text,
                     published_at=parse_datetime(post.get("published")),
-                    engagement_count=int(counts.get("score") or 0) or None,
+                    engagement_count=int(counts.get("score") or post.get("score") or 0) or None,
                     language=None,
                     external_id=str(post_id) if post_id is not None else None,
                 )

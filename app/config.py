@@ -63,11 +63,14 @@ class Settings(BaseSettings):
     # routinely ran past 3s and got cancelled outright by asyncio.wait_for,
     # leaving only the single lightweight Lemmy endpoint reliably finishing
     # in time. Can still be overridden via CONNECTOR_TIMEOUT_SECONDS.
-    connector_timeout_seconds: float = 3.0
+    connector_timeout_seconds: float = 8.0
     # Overall budget for a live/search-triggered refresh. Once this elapses,
     # aggregation returns whatever connectors have finished instead of waiting
-    # for stragglers.
-    search_fetch_budget_seconds: float = 3.5
+    # for stragglers. Kept at roughly 1.25x connector_timeout_seconds as a
+    # backstop for event-loop scheduling delays, not because any connector
+    # should legitimately take this long. Can be overridden via
+    # SEARCH_FETCH_BUDGET_SECONDS.
+    search_fetch_budget_seconds: float = 10.0
 
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only
@@ -89,6 +92,22 @@ class Settings(BaseSettings):
     reddit_user_agent: str = "KawnPulseEngine/1.0"
 
     youtube_api_key: str | None = None
+    # YouTube's search.list costs 100 quota units per call against a default
+    # 10,000/day, i.e. roughly 100 searches a day for the whole project. The
+    # background refresher re-searches the same topics all day, which burns
+    # that in a few hours and then YouTube silently returns nothing until the
+    # quota resets. Caching a topic's results for a while stops repeat
+    # refreshes from spending quota. 0 disables the cache.
+    youtube_cache_ttl_seconds: int = 6 * 3600
+
+    # Bluesky post search needs a logged-in session: the public AppView
+    # returns 403 to unauthenticated searchPosts calls. Create a (free)
+    # account for the engine, then an *app password* under Settings > App
+    # Passwords - never the account's real password.
+    bluesky_handle: str | None = None
+    bluesky_app_password: str | None = None
+    # Your account's PDS. bsky.social unless the account lives elsewhere.
+    bluesky_service_url: str = "https://bsky.social"
 
     # Per-connector kill switch for News, read by NewsRssConnector.enabled().
     # This field was previously missing entirely -- settings.news_enabled
@@ -121,11 +140,9 @@ class Settings(BaseSettings):
         "http://rss.cnn.com/rss/edition_world.rss,"
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml,"
         "https://www.aljazeera.com/xml/rss/all.xml,"
-
         "https://english.alarabiya.net/feed/flipboard/en.xml,"
         "https://feeds.feedburner.com/euronews/en/home/,"
         "https://www.france24.com/fr/rss"
-    
     )
     reuters_rss_workaround_template: str = "https://news.google.com/rss/search?q={query}+site:reuters.com"
 
@@ -242,6 +259,9 @@ class Settings(BaseSettings):
 
     def youtube_configured(self) -> bool:
         return bool(self.youtube_api_key)
+
+    def bluesky_configured(self) -> bool:
+        return bool(self.bluesky_handle and self.bluesky_app_password)
 
     def producthunt_configured(self) -> bool:
         return bool(self.producthunt_access_token)
