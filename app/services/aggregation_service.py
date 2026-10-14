@@ -18,6 +18,7 @@ from app.connectors.lemmy_connector import LemmyConnector
 from app.connectors.lobsters_connector import LobstersConnector
 from app.connectors.mastodon_connector import MastodonConnector
 from app.connectors.mock_connector import MockConnector
+from app.connectors.gdelt_connector import GdeltConnector
 from app.connectors.news_connector import NewsRssConnector
 from app.connectors.peertube_connector import PeerTubeConnector
 from app.connectors.producthunt_connector import ProductHuntConnector
@@ -179,6 +180,7 @@ class AggregationService:
         self.reddit = RedditStreamConnector()
         self.youtube = YouTubeConnector()
         self.news = NewsRssConnector()
+        self.gdelt = GdeltConnector()
         self.hackernews = HackerNewsConnector()
         self.hashnode = HashnodeConnector()
 
@@ -211,6 +213,10 @@ class AggregationService:
             # -- heavy tier --
             (self.devto, "DevTo"),
             (self.news, "News"),
+            # News search across ~65 languages, for regional/non-English
+            # coverage the fixed RSS outlets can't give. Spaced and cached
+            # inside the connector (see gdelt_connector.py).
+            (self.gdelt, "GDELT"),
             (self.hashnode, "Hashnode"),
             # -- extras --
             (self.discourse, "Discourse"),

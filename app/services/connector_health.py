@@ -128,4 +128,6 @@ def explain_disabled(source: str) -> str | None:
         return "PRODUCTHUNT_ACCESS_TOKEN is not set"
     if s == "news" and not settings.news_enabled:
         return "NEWS_ENABLED is false"
+    if s == "gdelt" and not settings.gdelt_enabled:
+        return "GDELT_ENABLED is false"
     return None

@@ -127,6 +127,33 @@ curl -H "X-Cron-Secret: $CRON_HEARTBEAT_SECRET" \
 | Bluesky | `BLUESKY_HANDLE` and `BLUESKY_APP_PASSWORD` (an *app password*, not the account password). Anonymous post search is blocked by Bluesky. |
 | YouTube | `YOUTUBE_API_KEY`. Each search costs 100 of the 10,000 daily quota units. |
 | Mastodon, Lemmy, PeerTube | Nothing (public endpoints). |
+| GDELT | Nothing (public, no key). About one request per 5 s per IP, so the engine spaces and caches its calls. |
+
+### GDELT (global news in many languages)
+
+`GDELT` searches news from monitored outlets worldwide. Keywords are matched across GDELT's translated
+languages, so an English topic still finds French or Arabic coverage. It returns headlines (not article
+text), so a card built from it quotes the headline. Only about the last 3 months are searchable.
+
+- The request's `language` (e.g. `fr`) becomes a `sourcelang:` filter; with no language the engine uses
+  `GDELT_DEFAULT_LANGUAGE` (default `english`; empty = no filter).
+- Topics need at least one word of 3+ characters (GDELT rejects shorter keywords), so a topic like "AI"
+  alone can't be searched.
+- An article from a known outlet keeps that outlet's name, so it gets the same country visibility as the
+  outlet's own RSS items (a France24 article found through GDELT is still France24-only). Any other
+  publisher is labelled `News`.
+- If GDELT's rate limit is hit the connector skips (and says so in `/api/sources/health`) rather than queue.
+
+### Regional news outlets
+
+Regional outlets are defined in one place, `REGIONAL_OUTLET_FEEDS` in `app/services/outlet_registry.py`:
+display name, RSS URL, publisher domains, and the countries allowed to see it. To add a region, add entries
+there - nothing else needs editing. `REGIONAL_OUTLETS_ENABLED=false` stops fetching them.
+
+Each outlet's feed health is reported by name in `GET /api/sources/health`, so a feed URL that has moved
+shows up as an error for that outlet instead of silently contributing nothing. Note that RSS items are
+matched against the topic text, so a French outlet matches French (or proper-noun) topics, not an English
+one - GDELT is what covers cross-language discovery.
 
 ## Project structure
 

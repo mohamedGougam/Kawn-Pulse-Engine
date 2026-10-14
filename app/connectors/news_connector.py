@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import urllib.parse
 
 import feedparser
@@ -8,7 +9,10 @@ import httpx
 
 from app.config import settings
 from app.connectors.base import NormalizedRawItem
+from app.services import connector_health
+from app.services.outlet_registry import outlet_name_for_feed_url, regional_outlet_feeds
 from app.utils.date_utils import parse_datetime
+from app.utils.http_errors import BAD_RESPONSE, ErrorInfo, describe_error
 from app.utils.text_utils import normalize_ws, topic_matches
 
 
@@ -50,6 +54,12 @@ _OUTLET_NAME_BY_URL_FRAGMENT: list[tuple[str, str]] = [
 
 
 def _outlet_name_for_feed_url(feed_url: str) -> str | None:
+    # Regional outlets are defined in app/services/outlet_registry.py (feed
+    # URL, domains and visibility in one place); the list above only covers
+    # the global outlets configured through settings.major_outlet_rss_feeds.
+    registry_name = outlet_name_for_feed_url(feed_url)
+    if registry_name:
+        return registry_name
     for fragment, outlet_name in _OUTLET_NAME_BY_URL_FRAGMENT:
         if fragment in feed_url:
             return outlet_name
@@ -83,7 +93,14 @@ class NewsRssConnector:
         # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera): these publish
         # whole sections, not per-query search results, so every entry has
         # to be matched against the topic ourselves.
-        for url in settings.major_outlet_feeds():
+        # Plus the regional outlets from the registry. De-duplicated, so a
+        # URL that is both in an env-provided MAJOR_OUTLET_RSS_FEEDS and in
+        # the registry (France24 used to live only in the former) is fetched
+        # once, not twice.
+        fixed_urls = list(dict.fromkeys(
+            settings.major_outlet_feeds() + [f.feed_url for f in regional_outlet_feeds()]
+        ))
+        for url in fixed_urls:
             fetch_jobs.append((url, True))
 
         # Fetch every feed concurrently rather than one at a time. With up
@@ -93,7 +110,7 @@ class NewsRssConnector:
         # before the whole connector got cancelled -- firing them all at
         # once lets every feed race the same budget independently instead
         # of queueing behind each other.
-        async with httpx.AsyncClient(timeout=3.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             results = await asyncio.gather(
                 *(
                     self._fetch_feed(client, url, topic, language, require_match=require_match)
@@ -119,12 +136,6 @@ class NewsRssConnector:
         *,
         require_match: bool,
     ) -> list[NormalizedRawItem]:
-        try:
-            resp = await client.get(url, headers={"User-Agent": settings.reddit_user_agent})
-            resp.raise_for_status()
-        except Exception:
-            return []
-
         # Resolve the actual publisher from the feed URL itself where we
         # can (fixed outlet feeds, plus the Reuters-scoped Google News
         # workaround). Google News' own search feeds embed the originating
@@ -134,7 +145,35 @@ class NewsRssConnector:
         # publishers at once and has nothing to key off of otherwise.
         feed_outlet_name = _outlet_name_for_feed_url(url)
 
+        # Each feed reports its own health, keyed by outlet name (or host for
+        # the generic search feeds), so a dead or moved feed URL shows up in
+        # /api/sources/health instead of just looking like "no matching
+        # news". The connector still returns [] for a failed feed: one bad
+        # feed must not fail the others.
+        health_key = feed_outlet_name or (urllib.parse.urlparse(url).hostname or "news-feed")
+        started = time.monotonic()
+
+        try:
+            resp = await client.get(url, headers={"User-Agent": settings.reddit_user_agent})
+            resp.raise_for_status()
+        except Exception as e:
+            connector_health.record_failure(health_key, describe_error(e), started)
+            return []
+
         parsed = feedparser.parse(resp.text)
+        if not parsed.entries and not parsed.get("version"):
+            # HTTP 200 but not a feed: typically an HTML page served where the
+            # feed used to be, after the outlet moved or removed its RSS URL.
+            # feedparser sets `version` ("rss20", "atom10", ...) for any real
+            # feed, even an empty one, and leaves it blank for anything else;
+            # `bozo` is NOT a reliable signal (well-formed HTML isn't flagged).
+            connector_health.record_failure(
+                health_key,
+                ErrorInfo(BAD_RESPONSE, "response was not a valid RSS/Atom feed (no entries could be parsed)"),
+                started,
+            )
+            return []
+
         items: list[NormalizedRawItem] = []
         for e in parsed.entries:
             source_url = getattr(e, "link", None) or getattr(e, "id", None) or url
@@ -168,5 +207,6 @@ class NewsRssConnector:
                 )
             )
 
+        connector_health.record_success(health_key, len(items), started)
         return items
 

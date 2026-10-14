@@ -11,6 +11,7 @@ from app.services import connector_health
 from app.services.connector_health import DISABLED, EMPTY, ERROR, OK, TIMEOUT, explain_disabled
 from app.utils.http_errors import (
     AUTH_REJECTED,
+    BAD_RESPONSE,
     NETWORK,
     QUOTA_EXCEEDED,
     RATE_LIMITED,
@@ -46,6 +47,14 @@ _HINTS: dict[tuple[str | None, str], str] = {
     ("Mastodon", AUTH_REJECTED): (
         "This instance requires login even for hashtag timelines (public preview disabled). Point "
         "MASTODON_INSTANCE_URL at an instance that allows it."
+    ),
+    ("GDELT", RATE_LIMITED): (
+        "GDELT allows about one request every 5 seconds per IP. The engine spaces its calls and backs off, but "
+        "several searches at once can still trip it; results are cached for GDELT_CACHE_TTL_SECONDS."
+    ),
+    ("GDELT", BAD_RESPONSE): (
+        "GDELT answers a rejected query with plain text instead of JSON (for example a keyword under 3 "
+        "characters); its own wording is in the message."
     ),
     (None, RATE_LIMITED): "Rate limited by the source. Reduce how often it's called or wait before retrying.",
     (None, SERVER_ERROR): "The source's own servers are failing; nothing to fix on this side.",

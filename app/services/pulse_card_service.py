@@ -4,6 +4,7 @@ import random
 from dataclasses import dataclass
 
 from app.services.ai_service import AIService
+from app.services.outlet_registry import news_outlet_names
 from app.services.normalization_service import NormalizedItem
 from app.utils.text_utils import (
     best_sentence,
@@ -22,15 +23,12 @@ class CardDraft:
     display_label: str
 
 
-_NEWS_OUTLET_NAMES = {
-    "news", "bbc", "cnn", "nyt", "al jazeera", "al arabiya", "euronews", "reuters",
-    # France24 (app/services/outlet_registry.py) shares NewsRssConnector with
-    # the other fixed outlets above and must share their capping family here
-    # too, or it would wrongly get its own separate
-    # max_source_items_per_connector allotment instead of competing for the
-    # same shared "News" pool - inconsistent with how it's fetched.
-    "france24",
-}
+# Every curated outlet (global and regional, from app/services/outlet_registry)
+# is fetched through the shared News connector, so they must all share its
+# capping family here - otherwise each regional outlet would wrongly get its
+# own max_source_items_per_connector allotment instead of competing for the
+# same "News" pool, which is inconsistent with how they are fetched.
+_NEWS_OUTLET_NAMES = news_outlet_names()
 
 
 def connector_family_for_source(source: str) -> str:

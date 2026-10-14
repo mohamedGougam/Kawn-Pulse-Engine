@@ -109,6 +109,30 @@ class Settings(BaseSettings):
     # Your account's PDS. bsky.social unless the account lives elsewhere.
     bluesky_service_url: str = "https://bsky.social"
 
+    # --- GDELT (global news search, 65 languages, no key) --------------------
+    # GDELT asks for at most about one request every 5 seconds per IP, and
+    # only keeps roughly the last 3 months. The connector spaces its calls
+    # (gdelt_min_interval_seconds), gives up rather than queue behind more
+    # than gdelt_max_wait_seconds of other GDELT calls (the connector timeout
+    # is 8s, so a longer wait could never finish anyway), and caches results.
+    gdelt_enabled: bool = True
+    # How far back to search. Keep it at or below source_freshness_days: the
+    # aggregator discards items older than that, so a longer window only
+    # fetches results that are thrown away.
+    gdelt_timespan: str = "7d"
+    gdelt_min_interval_seconds: float = 5.5
+    gdelt_max_wait_seconds: float = 6.0
+    gdelt_cache_ttl_seconds: int = 1800
+    # Language filter applied when the request doesn't name one, so an
+    # English-language user isn't shown Arabic/Chinese headlines they can't
+    # read. Empty string = no filter.
+    gdelt_default_language: str = "english"
+
+    # Regional outlet feeds (France24, Le Monde, ...) defined in
+    # app/services/outlet_registry.py. Turning this off stops fetching them;
+    # it does not change who may see items that are already stored.
+    regional_outlets_enabled: bool = True
+
     # Per-connector kill switch for News, read by NewsRssConnector.enabled().
     # This field was previously missing entirely -- settings.news_enabled
     # raised AttributeError on every call, which got silently swallowed as
@@ -141,8 +165,7 @@ class Settings(BaseSettings):
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml,"
         "https://www.aljazeera.com/xml/rss/all.xml,"
         "https://english.alarabiya.net/feed/flipboard/en.xml,"
-        "https://feeds.feedburner.com/euronews/en/home/,"
-        "https://www.france24.com/fr/rss"
+        "https://feeds.feedburner.com/euronews/en/home/"
     )
     reuters_rss_workaround_template: str = "https://news.google.com/rss/search?q={query}+site:reuters.com"
 

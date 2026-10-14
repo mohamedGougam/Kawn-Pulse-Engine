@@ -29,27 +29,10 @@ class SourceItemRepository:
         if not items:
             return 0
 
-
-        # topic_ids = {it.topic_id for it in items}
-        # if not topic_ids:
-        #     return 0
-
-        # existing: set[tuple[str, str, str]] = set()
-        # res = await session.execute(
-        #     select(SourceItem.topic_id, SourceItem.source, SourceItem.source_url)
-        #     .where(SourceItem.topic_id.in_(topic_ids))
-        # )
-        # for row in res.all():
-        #     existing.add((row[0], row[1], row[2]))
-
-        # seen_in_batch: set[tuple[str, str, str]] = set()
-        # to_add: list[SourceItem] = []
-
         # Cheap in-batch dedup so one statement never carries the same key twice.
         seen: set[tuple[str, str, str]] = set()
         rows: list[dict] = []
         now = datetime.utcnow()
-
         for it in items:
             key = (it.topic_id, it.source, it.source_url)
             if key in seen:
@@ -72,16 +55,11 @@ class SourceItemRepository:
                 }
             )
 
-
-        # if to_add:
-        #     session.add_all(to_add)
-
         if not rows:
             return 0
 
         bind = session.get_bind()
         insert_fn = _dialect_insert(bind.dialect.name)
-
 
         inserted = 0
         # Chunked so a large batch stays well under driver bind-parameter limits.
@@ -150,9 +128,11 @@ class SourceItemRepository:
 
     async def delete_for_topic(self, session: AsyncSession, topic_id: str) -> int:
         res = await session.execute(delete(SourceItem).where(SourceItem.topic_id == topic_id))
+        await session.commit()
         return int(res.rowcount or 0)
 
     async def delete_older_than(self, session: AsyncSession, topic_id: str, cutoff: datetime) -> int:
+  ## items are being accumulated over time, adn with the 31 dasy cap , older than 31 days need to be deleted
         stmt = delete(SourceItem).where(
             SourceItem.topic_id == topic_id,
             or_(
@@ -161,9 +141,5 @@ class SourceItemRepository:
             ),
         )
         res = await session.execute(stmt)
-
-        # return int(res.rowcount or 0)
-
         await session.commit()
         return int(res.rowcount or 0)
-
