@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     r2_bucket_name: str = "kawn-pulse-cache"
     # Key layout: sources/<source_name>/<topic_slug>.json
     r2_key_prefix: str = "sources"
+    # Max simultaneous R2 requests (also the S3 client's connection-pool
+    # size). Every R2 call used to build its own S3 client; ~15 reads and ~15
+    # writes per topic refresh meant dozens of clients alive at once, each
+    # holding ~0.8 MB that Python never returned to the OS.
+    r2_max_concurrency: int = 6
 
     def r2_configured(self) -> bool:
         return bool(self.r2_account_id and self.r2_access_key_id and self.r2_secret_access_key)
@@ -233,6 +238,37 @@ class Settings(BaseSettings):
     # with real connector + AI latency per topic, an unbounded pass can run
     # long enough to overlap the next tick even with the tick-lock in place.
     background_batch_size: int = 6
+
+    # --- Memory protection (Render's free instance has 512 MB) -------------
+    # How many topic refreshes may run at once. Each one fans out to every
+    # connector plus R2 cache traffic, so unbounded concurrency (several
+    # users searching, the explore feed re-queuing cold subjects) is what
+    # pushed the process over its memory limit. Extra user searches wait
+    # their turn for up to refresh_queue_timeout_seconds, then get a 503
+    # asking them to retry. Background refreshes (scheduler, cron-tick,
+    # explore-feed cold start) have their own, smaller allowance so they can
+    # never starve a live search.
+    max_concurrent_refreshes: int = 3
+    max_concurrent_background_refreshes: int = 1
+    refresh_queue_timeout_seconds: float = 25.0
+    # A topic whose background refresh was attempted less than this long ago
+    # is not attempted again. Stops a subject that keeps failing (and so
+    # keeps showing zero cards) from being re-queued on every feed load.
+    background_retry_cooldown_seconds: float = 300.0
+    # Resident-memory thresholds in MB, read from /proc (Linux only).
+    #   soft: background refreshes are skipped while above it (they can wait)
+    #   recycle: above it, and with no refresh running, the gunicorn worker
+    #   is asked to exit gracefully and is replaced with a fresh process.
+    #   Python rarely returns memory to the OS after a burst, so a clean
+    #   recycle is far better than hitting the limit and being killed.
+    # Set memory_recycle_mb to 0 to disable recycling.
+    memory_soft_limit_mb: int = 380
+    memory_recycle_mb: int = 420
+    memory_check_interval_seconds: float = 30.0
+    # A worker is never recycled until it has been up this long, so a
+    # recycle limit set below the app's normal footprint (a misconfiguration)
+    # cannot put the service into a restart loop.
+    memory_recycle_min_uptime_seconds: float = 600.0
 
     # Retention window for stored source items. Was 31 days, which let each
     # topic's rows pile up for a full month before any pruning caught up.

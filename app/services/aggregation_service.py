@@ -63,6 +63,8 @@ from app.services.pulse_card_service import (
     connector_family_for_source,
     display_label_for_source,
 )
+from app.database import get_session
+from app.services.refresh_gate import RefreshBusy, gate  # noqa: F401  (RefreshBusy re-exported for callers)
 from app.storage.object_store import ObjectStoreUnavailable, object_store
 from app.utils.date_utils import parse_datetime
 from app.utils.text_utils import best_sentence, clean_text, is_low_quality, trim_text
@@ -190,6 +192,9 @@ class AggregationService:
         self.lemmy = LemmyConnector()
         self.peertube = PeerTubeConnector()
         self.producthunt = ProductHuntConnector()
+        # Fire-and-forget tasks (R2 cache writes). asyncio only keeps weak
+        # references to running tasks, so hold them until they finish.
+        self._background_tasks: set[asyncio.Task] = set()
 
         # Single source of truth for which connectors are active, shared by
         # refresh_topic's live-fetch wave and build_cache_preview_cards'
@@ -227,6 +232,48 @@ class AggregationService:
         ]
 
     async def refresh_topic(
+        self,
+        session: AsyncSession,
+        query: str,
+        *,
+        language: str | None = None,
+        record_search: bool = True,
+    ) -> RefreshResult:
+        """User-triggered refresh (search, manual refresh).
+
+        At most settings.max_concurrent_refreshes run at once process-wide;
+        extra callers queue, and raise RefreshBusy if no slot frees up within
+        settings.refresh_queue_timeout_seconds.
+        """
+        async with gate.user_slot():
+            return await self._refresh_topic(session, query, language=language, record_search=record_search)
+
+    async def refresh_in_background(self, query: str) -> RefreshResult | None:
+        """Scheduler / cron-tick / explore-feed cold-start refresh.
+
+        Opens its own session and never counts as search interest. Returns
+        None (without doing any work) when the topic is already being
+        refreshed, was attempted very recently, or the process is under
+        memory pressure; also None if the refresh itself failed, which is
+        logged. Safe to call as often as you like - that is the point: the
+        explore feed used to queue a full refresh for every empty subject on
+        every request.
+        """
+        skip = gate.try_begin_background(query)
+        if skip:
+            logger.info("background refresh of %r skipped: %s", query, skip)
+            return None
+        try:
+            async with gate.background_slot():
+                async with get_session() as session:
+                    return await self._refresh_topic(session, query, record_search=False)
+        except Exception:
+            logger.warning("background refresh failed for topic=%r", query, exc_info=True)
+            return None
+        finally:
+            gate.end_background(query)
+
+    async def _refresh_topic(
         self,
         session: AsyncSession,
         query: str,
@@ -286,20 +333,6 @@ class AggregationService:
             for connector, fallback_source in fetch_plan
         }
 
-        # Heavy-fetch cache reads run *in parallel* with the live fetch wave,
-        # not after it — they're cheap R2 GETs and shouldn't add to the
-        # live-fetch budget. Read for every *enabled* source up front; only
-        # the ones whose live fetch comes back empty actually get used
-        # below, but kicking them all off now means the fallback is ready
-        # the instant we know it's needed instead of paying R2 latency
-        # serially after. Deliberately skipped for disabled sources — see
-        # the enabled_by_source comment above.
-        cache_task_by_source: dict[str, asyncio.Task] = {
-            fallback_source: asyncio.create_task(self._read_cached_source(fallback_source, topic.query))
-            for _, fallback_source in fetch_plan
-            if enabled_by_source.get(fallback_source, True)
-        }
-
         done, pending = await asyncio.wait(list(task_by_source.values()), timeout=settings.search_fetch_budget_seconds)
         for t in pending:
             t.cancel()
@@ -344,7 +377,9 @@ class AggregationService:
         # Deliberately only the *live* items, not cache-fallback items added
         # below — otherwise a stale cache entry would keep re-writing itself
         # with a fresh `fetched_at`, making it look newer than it is.
-        asyncio.create_task(self._persist_heavy_cache(topic.query, live_cleaned, connector_by_source_url))
+        persist_task = asyncio.create_task(self._persist_heavy_cache(topic.query, live_cleaned, connector_by_source_url))
+        self._background_tasks.add(persist_task)
+        persist_task.add_done_callback(self._background_tasks.discard)
 
         # Merge in cached data for any *enabled* source whose live fetch came
         # back empty (timed out, errored, or genuinely had nothing this
@@ -367,6 +402,19 @@ class AggregationService:
             if not items and enabled_by_source.get(s, True)
         ]
         disabled_sources = [s for s, en in enabled_by_source.items() if not en]
+
+        # Heavy-fetch cache reads, only for the sources whose live fetch came
+        # back empty (typically a few, not all ~15). They used to be started
+        # for every enabled source up front, in parallel with the live wave,
+        # even though only the empty ones were ever used: ~10 wasted R2
+        # round-trips per refresh, each one a live S3 client. They still run
+        # concurrently with each other (bounded by r2_max_concurrency), so a
+        # failed source costs one R2 round-trip, not one per source in turn.
+        # Disabled sources are excluded - see the enabled_by_source comment.
+        cache_task_by_source: dict[str, asyncio.Task] = {
+            source: asyncio.create_task(self._read_cached_source(source, topic.query))
+            for source in empty_live_sources
+        }
 
         cached_sources: list[str] = []
         missing_sources: list[str] = []

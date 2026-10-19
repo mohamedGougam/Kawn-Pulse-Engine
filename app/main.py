@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,7 +12,9 @@ from app.api.routes_sources import router as sources_router
 from app.api.routes_topics import router as topics_router
 from app.config import settings
 from app.database import init_db
+from app.services import memory_guard
 from app.services.scheduler_service import SchedulerService
+from app.storage.object_store import object_store
 from app.streaming.bluesky_firehose import bluesky_firehose_service
 from app.streaming.reddit_stream import reddit_stream_service
 from pathlib import Path
@@ -29,10 +32,13 @@ async def lifespan(app: FastAPI):
     # free-tier dyno that spins down on idle).
     bluesky_firehose_service.start()
     reddit_stream_service.start()
+    guard_task = asyncio.create_task(memory_guard.run())
     yield
+    guard_task.cancel()
     scheduler_service.shutdown()
     await bluesky_firehose_service.shutdown()
     await reddit_stream_service.shutdown()
+    await object_store.close()
 
 
 app = FastAPI(

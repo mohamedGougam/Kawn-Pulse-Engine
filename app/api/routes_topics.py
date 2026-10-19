@@ -21,6 +21,7 @@ from app.repositories.pulse_card_repository import PulseCardRepository
 from app.services.outlet_registry import filter_visible_cards
 from app.repositories.topic_repository import TopicRepository
 from app.services.aggregation_service import AggregationService
+from app.services.refresh_gate import RefreshBusy
 from app.services.ai_service import AIService
 
 router = APIRouter(prefix="/api/topics", tags=["topics"])
@@ -83,6 +84,12 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
 
     try:
         refresh_result = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
+    except RefreshBusy as e:
+        raise HTTPException(
+            status_code=503,
+            detail="The server is busy refreshing other topics; please retry in a few seconds.",
+            headers={"Retry-After": "10"},
+        )
     except Exception as e:
         logger.exception("refresh_topic failed for query=%r language=%r", req.query, req.language)
         raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
@@ -143,11 +150,12 @@ class Bulkcardsrequest(BaseModel):
 
 
 async def Backgroundrefresh(query: str):
-    async with get_session() as session:
-        try:
-            await aggregation.refresh_topic(session, query)
-        except Exception:
-            pass
+    # Every explore-feed request queues this for each Discover subject that
+    # still has no cards. refresh_in_background skips a subject that is
+    # already being refreshed or was tried within the last few minutes, so a
+    # busy feed (or a subject that keeps failing and so keeps showing zero
+    # cards) can no longer stack up dozens of full 15-source refreshes.
+    await aggregation.refresh_in_background(query)
 
 
 @router.get("/explore-feed", response_model=list[PulseCardSchema])
@@ -332,7 +340,14 @@ async def refresh(topic_id: str, session: AsyncSession = Depends(_session_dep)) 
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
 
-    await aggregation.refresh_topic(session, topic.query)
+    try:
+        await aggregation.refresh_topic(session, topic.query)
+    except RefreshBusy:
+        raise HTTPException(
+            status_code=503,
+            detail="The server is busy refreshing other topics; please retry in a few seconds.",
+            headers={"Retry-After": "10"},
+        )
     return {"status": "ok", "topic_id": topic_id, "refreshed": True}
 
 

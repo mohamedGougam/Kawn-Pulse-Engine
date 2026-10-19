@@ -117,9 +117,13 @@ class SchedulerService:
             async with semaphore:
                 try:
                     # Background-driven refreshes never count toward the
-                    # search-interest signal that feeds this same
-                    # priority queue.
-                    await self.aggregation.refresh_topic(query=topic.query, record_search=False)
+                    # search-interest signal that feeds this same priority
+                    # queue. refresh_in_background opens its own session
+                    # (the old direct refresh_topic(query=...) call omitted
+                    # the required `session` argument, so EVERY background
+                    # refresh raised TypeError and was swallowed here) and
+                    # is bounded process-wide by the refresh gate.
+                    await self.aggregation.refresh_in_background(topic.query)
                 except Exception:
                     logger.warning("background refresh failed for topic=%r", topic.query, exc_info=True)
 
