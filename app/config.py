@@ -303,7 +303,10 @@ class Settings(BaseSettings):
 
    
     # Scheduler
-    scheduler_enabled: bool = True
+    # Default OFF: render.yaml is not always applied (dashboard start command),
+    # and an always-on in-process scheduler keeps Neon compute awake 24/7.
+    # cron-tick (external pinger) drives refreshes instead.
+    scheduler_enabled: bool = False
     scheduler_refresh_minutes: int = 30
 
     Discover_subjects: list[str] = [
