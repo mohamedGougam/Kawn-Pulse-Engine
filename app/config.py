@@ -157,6 +157,13 @@ class Settings(BaseSettings):
     # NEWS_ENABLED=false to genuinely turn it off.
     news_enabled: bool = True
 
+    # News pulls ~15 RSS feeds at once. Feeds that haven't answered after this
+    # many seconds are dropped and the News source returns what the others gave
+    # (it used to be all-or-nothing: one slow feed cancelled the whole source at
+    # connector_timeout_seconds and returned NOTHING). Keep it below
+    # connector_timeout_seconds.
+    news_feed_deadline_seconds: float = 5.0
+
     news_rss_feeds: str = "https://news.google.com/rss/search?q={query}"
 
     # Fixed-URL outlet feeds (CNN/BBC/NYT/Al Jazeera/Al Arabiya/Euronews) —

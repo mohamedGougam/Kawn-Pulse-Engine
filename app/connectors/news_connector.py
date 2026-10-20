@@ -66,6 +66,25 @@ def _outlet_name_for_feed_url(feed_url: str) -> str | None:
     return None
 
 
+def _interleave(batches: list[list], limit: int) -> list:
+    """Round-robin across feeds, then truncate.
+
+    Concatenating in feed order and cutting at `limit` meant the first feed (the
+    Google News search, with up to ~100 entries) filled the whole allowance and
+    every outlet feed after it - BBC, CNN, Le Monde, France24... - was cut off.
+    """
+    out: list = []
+    i = 0
+    while len(out) < limit and any(i < len(b) for b in batches):
+        for b in batches:
+            if i < len(b):
+                out.append(b[i])
+                if len(out) >= limit:
+                    break
+        i += 1
+    return out
+
+
 class NewsRssConnector:
     name = "News"
 
@@ -111,21 +130,19 @@ class NewsRssConnector:
         # once lets every feed race the same budget independently instead
         # of queueing behind each other.
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            results = await asyncio.gather(
-                *(
-                    self._fetch_feed(client, url, topic, language, require_match=require_match)
-                    for url, require_match in fetch_jobs
-                ),
-                return_exceptions=True,
-            )
+            tasks = [
+                asyncio.create_task(self._fetch_feed(client, url, topic, language, require_match=require_match))
+                for url, require_match in fetch_jobs
+            ]
+            # Take whatever has answered by the deadline; don't let one slow feed
+            # (or a dead one hanging until its own 15s timeout) cost every other
+            # feed's results too.
+            done, pending = await asyncio.wait(tasks, timeout=settings.news_feed_deadline_seconds)
+            for t in pending:
+                t.cancel()
+            results = [t.result() if not t.exception() else [] for t in tasks if t in done and not t.cancelled()]
 
-        items: list[NormalizedRawItem] = []
-        for res in results:
-            if isinstance(res, Exception):
-                continue
-            items.extend(res)
-
-        return items[:limit]
+        return _interleave(results, limit)
 
     async def _fetch_feed(
         self,
@@ -160,7 +177,9 @@ class NewsRssConnector:
             connector_health.record_failure(health_key, describe_error(e), started)
             return []
 
-        parsed = feedparser.parse(resp.text)
+        # CPU-bound and synchronous: on the event loop, ~15 feeds parsed back to
+        # back froze every other connector (and the search's own timers).
+        parsed = await asyncio.to_thread(feedparser.parse, resp.text)
         if not parsed.entries and not parsed.get("version"):
             # HTTP 200 but not a feed: typically an HTML page served where the
             # feed used to be, after the outlet moved or removed its RSS URL.
