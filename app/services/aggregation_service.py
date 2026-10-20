@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +92,10 @@ class RefreshResult:
     # turned off, never attempted this round (not counted in
     # missing_sources, and never backfilled from cache).
     disabled_sources: list[str]
+    # Where the time went (seconds), so a slow search can be diagnosed from the
+    # response instead of guessed at. Keys: total, fetch, cache, db, ai, cards,
+    # sources (per-connector durations), early_exit, stragglers.
+    timings: dict = field(default_factory=dict)
 
     @property
     def partial(self) -> bool:
@@ -281,6 +285,8 @@ class AggregationService:
         language: str | None = None,
         record_search: bool = True,
     ) -> RefreshResult:
+        t_start = time.monotonic()
+        source_seconds: dict[str, float] = {}
         topic = await self.topic_repo.upsert(session, query)
         if record_search:
             # Only real user-triggered refreshes (search, manual refresh)
@@ -301,7 +307,11 @@ class AggregationService:
         per = max(5, settings.max_source_items_per_connector)
 
         async def _bounded_fetch(connector, fallback_source: str):
-            return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
+            t0 = time.monotonic()
+            try:
+                return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
+            finally:
+                source_seconds[fallback_source] = round(time.monotonic() - t0, 2)
 
         # Overall budget for this refresh's live-fetch stage. asyncio.gather
         # itself has no timeout, so without this a single connector whose own
@@ -333,15 +343,47 @@ class AggregationService:
             for connector, fallback_source in fetch_plan
         }
 
-        done, pending = await asyncio.wait(list(task_by_source.values()), timeout=settings.search_fetch_budget_seconds)
+        # Wait for the connectors, but not necessarily for ALL of them: once
+        # enough different sources have produced results, give the rest only a
+        # short grace period (see search_early_exit_min_sources in config).
+        t_fetch = time.monotonic()
+        budget = settings.search_fetch_budget_seconds
+        min_sources = settings.search_early_exit_min_sources
+        grace = settings.search_straggler_grace_seconds
+        pending = set(task_by_source.values())
+        early_exit = False
+        enough_at: float | None = None
+        have_results: set[str] = set()
+        name_of = {t: n for n, t in task_by_source.items()}
+        while pending:
+            now_ = time.monotonic()
+            timeout = budget - (now_ - t_fetch)
+            if enough_at is not None:
+                timeout = min(timeout, grace - (now_ - enough_at))
+            if timeout <= 0:
+                early_exit = enough_at is not None and (now_ - t_fetch) < budget
+                break
+            finished, pending = await asyncio.wait(pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if not finished:
+                early_exit = enough_at is not None and (time.monotonic() - t_fetch) < budget
+                break
+            for t in finished:
+                try:
+                    if t.result():
+                        have_results.add(name_of[t])
+                except Exception:
+                    pass
+            if enough_at is None and min_sources > 0 and len(have_results) >= min_sources:
+                enough_at = time.monotonic()
         for t in pending:
             t.cancel()
+        stragglers = [source for source, t in task_by_source.items() if t in pending]
         if pending:
-            names = [source for source, t in task_by_source.items() if t in pending]
             logger.warning(
-                "refresh_topic budget (%ss) exceeded for query=%r, skipping still-pending sources: %s",
-                settings.search_fetch_budget_seconds, query, names,
+                "refresh_topic stopped waiting after %.1fs (%s) for query=%r, skipping still-pending sources: %s",
+                time.monotonic() - t_fetch, "early exit" if early_exit else f"budget {budget}s", query, stragglers,
             )
+        fetch_seconds = time.monotonic() - t_fetch
 
         live_items_by_source: dict[str, list] = {}
         for source, t in task_by_source.items():
@@ -419,14 +461,27 @@ class AggregationService:
         cached_sources: list[str] = []
         missing_sources: list[str] = []
         source_freshness: dict[str, str] = {}
+
+        # ONE shared deadline for all the cache reads. This used to await them one
+        # after another, each with its own timeout, so N slow reads cost N x the
+        # timeout (5 slow sources = 10s) even though they were started together.
+        t_cache = time.monotonic()
+        if cache_task_by_source:
+            await asyncio.wait(list(cache_task_by_source.values()), timeout=settings.heavy_cache_read_timeout_seconds)
+        cache_seconds = time.monotonic() - t_cache
+
         for source in empty_live_sources:
             cache_task = cache_task_by_source.get(source)
             cache_payload = None
             if cache_task is not None:
-                try:
-                    cache_payload = await asyncio.wait_for(cache_task, timeout=settings.heavy_cache_read_timeout_seconds)
-                except Exception as e:
-                    logger.warning("heavy cache read failed for source=%s topic=%r: %s", source, query, e)
+                if cache_task.done() and not cache_task.cancelled():
+                    try:
+                        cache_payload = cache_task.result()
+                    except Exception as e:
+                        logger.warning("heavy cache read failed for source=%s topic=%r: %s", source, query, e)
+                else:
+                    cache_task.cancel()
+                    logger.warning("heavy cache read timed out for source=%s topic=%r", source, query)
 
             cache_items = _normalized_items_from_cache_payload(source, topic.query, cache_payload, limit=per)
             added_any = False
@@ -467,6 +522,7 @@ class AggregationService:
             )
             for it in cleaned
         ]
+        t_db = time.monotonic()
         await self.source_repo.bulk_upsert_ignore_duplicates(session, db_items)
 
         # Prune anything older than the freshness window so cards are only
@@ -502,7 +558,10 @@ class AggregationService:
         # so a slow/heavy search doesn't freeze the whole process for every
         # other concurrent request (including unrelated health checks and
         # the cron-tick endpoint) for the duration of inference.
+        db_seconds = time.monotonic() - t_db
+        t_ai = time.monotonic()
         ai_res = await asyncio.to_thread(self.ai.analyze_topic, topic.query, ai_texts)
+        ai_seconds = time.monotonic() - t_ai
 
         # Upsert TopicSummary
         themes_json = self.ai.dumps_themes(ai_res.themes)
@@ -517,6 +576,7 @@ class AggregationService:
         )
 
         # Rebuild pulse cards for a clean MVP experience.
+        t_cards = time.monotonic()
         await self.card_repo.delete_for_topic(session, topic.id)
 
         # Map items into NormalizedItem-like shape for card builder.
@@ -578,12 +638,26 @@ class AggregationService:
         session.add(topic)
         await session.commit()
 
+        timings = {
+            "total": round(time.monotonic() - t_start, 2),
+            "fetch": round(fetch_seconds, 2),
+            "cache": round(cache_seconds, 2),
+            "db": round(db_seconds, 2),
+            "ai": round(ai_seconds, 2),
+            "cards": round(time.monotonic() - t_cards, 2),
+            "sources": dict(sorted(source_seconds.items(), key=lambda kv: -kv[1])),
+            "early_exit": early_exit,
+            "stragglers": stragglers,
+        }
+        logger.info("refresh_topic %r timings: %s", query, timings)
+
         return RefreshResult(
             topic_id=topic.id,
             missing_sources=missing_sources,
             cached_sources=cached_sources,
             source_freshness=source_freshness,
             disabled_sources=disabled_sources,
+            timings=timings,
         )
 
     async def _read_cached_source(self, source: str, topic: str) -> dict | None:

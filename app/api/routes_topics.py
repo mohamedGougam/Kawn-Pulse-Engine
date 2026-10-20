@@ -19,6 +19,7 @@ from app.models.schemas import (
 )
 from app.repositories.pulse_card_repository import PulseCardRepository
 from app.services.category_service import annotate_and_filter
+from app.services.feed_diversity import mix_feed
 from app.services.outlet_registry import filter_visible_cards
 from app.repositories.topic_repository import TopicRepository
 from app.services.aggregation_service import AggregationService
@@ -140,6 +141,7 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
             "cached_sources": refresh_result.cached_sources,
             "source_freshness": refresh_result.source_freshness,
             "disabled_sources": refresh_result.disabled_sources,
+            "timings": refresh_result.timings,
         },
     )
 
@@ -167,7 +169,6 @@ async def Getexplorefeed(
     session: AsyncSession = Depends(_session_dep)
 ) -> list[PulseCardSchema]:
     from app.config import settings
-    import random
 
     subjects = settings.Discover_subjects
     topics_db = []
@@ -248,8 +249,9 @@ async def Getexplorefeed(
     results.extend(preview_results)
     results = filter_visible_cards(results, country)
     results = annotate_and_filter(results, country, category)
-    random.shuffle(results)
-    return results
+    # Mix AFTER the tab filter so every tab is varied on its own, not just "All".
+    # Replaces a plain random.shuffle, which let one source fill the feed.
+    return mix_feed(results)
 
 
 @router.post("/bulk-cards", response_model=list[PulseCardSchema])

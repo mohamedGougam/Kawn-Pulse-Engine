@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     # SEARCH_FETCH_BUDGET_SECONDS.
     search_fetch_budget_seconds: float = 10.0
 
+    # Search latency: don't make everyone wait for the slowest source.
+    # Once this many DIFFERENT sources have returned results, the search only
+    # waits search_straggler_grace_seconds more for the rest, then answers with
+    # what it has (a source that missed the window is backfilled from its R2
+    # cache like any other empty source). Without this a search always waited for
+    # its slowest connector (News / GDELT regularly take 6-8s) even when a dozen
+    # others had answered in under a second. 0 disables the early exit.
+    search_early_exit_min_sources: int = 5
+    search_straggler_grace_seconds: float = 2.0
+
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only
     # needs to be generous enough that a slow R2 read doesn't itself become
