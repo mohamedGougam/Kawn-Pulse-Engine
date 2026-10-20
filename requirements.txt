@@ -21,6 +21,3 @@ websockets==17.3
 asyncpraw==8.0.3
 gunicorn==26.2.0
 greenlet==3.5.6
-# Lexicon sentiment fallback (pure Python, ~1 MB). Production does not install
-# torch/transformers, so this is what produces positive/neutral/negative there.
-vaderSentiment==3.3.2
