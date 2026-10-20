@@ -279,6 +279,9 @@ class Settings(BaseSettings):
 
     # AI
     ai_sentiment_model: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+    # Lexicon fallback (used when transformers isn't installed, i.e. on Render):
+    # a VADER compound score within +/- this band counts as "neutral".
+    sentiment_neutral_band: float = 0.2
     ai_summary_model: str = "sshleifer/distilbart-cnn-12-6"
 
    

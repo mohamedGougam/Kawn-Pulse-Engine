@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 
 from app.config import settings
+from app.utils.lang_utils import detect_language
 
 
 @dataclass
@@ -35,7 +35,7 @@ class SentimentService:
             return []
 
         if self._pipeline is None:
-            return [_mock_sentiment(t) for t in texts]
+            return [lexicon_sentiment(t) for t in texts]
 
         try:
             out = self._pipeline(texts, truncation=True)
@@ -55,16 +55,45 @@ class SentimentService:
                 results.append(SentimentResult(label=norm, score=score))
             return results
         except Exception:
-            return [_mock_sentiment(t) for t in texts]
+            return [lexicon_sentiment(t) for t in texts]
 
 
-def _mock_sentiment(text: str) -> SentimentResult:
-    seed = abs(hash(text)) % (2**32)
-    rnd = random.Random(seed)
-    r = rnd.random()
-    if r < 0.34:
-        return SentimentResult(label="negative", score=round(0.55 + rnd.random() * 0.4, 3))
-    if r < 0.67:
-        return SentimentResult(label="neutral", score=round(0.5 + rnd.random() * 0.35, 3))
-    return SentimentResult(label="positive", score=round(0.55 + rnd.random() * 0.4, 3))
+_vader = None
 
+
+def _get_vader():
+    global _vader
+    if _vader is None:
+        from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+        _vader = SentimentIntensityAnalyzer()
+    return _vader
+
+
+def lexicon_sentiment(text: str) -> SentimentResult:
+    """Real (if simple) sentiment for when the transformer model isn't installed.
+
+    The production build installs requirements.txt only - no torch/transformers
+    (they don't fit a 512 MB instance) - so the pipeline above is normally
+    None. This used to fall back to a *random* label seeded from hash(text),
+    which is why an obviously happy sentence could come out "Negative". VADER is
+    a small pure-Python lexicon scorer: no model download, a few MB of RAM.
+
+    It only understands English, so other languages are reported "neutral"
+    rather than guessed at. Anything whose compound score sits inside
+    +/- settings.sentiment_neutral_band is "neutral".
+    """
+    text = (text or "").strip()
+    if not text or detect_language(text) not in ("en", "und"):
+        return SentimentResult(label="neutral", score=0.5)
+    try:
+        compound = float(_get_vader().polarity_scores(text)["compound"])
+    except Exception:
+        return SentimentResult(label="neutral", score=0.5)
+
+    band = settings.sentiment_neutral_band
+    if compound >= band:
+        return SentimentResult(label="positive", score=round(abs(compound), 3))
+    if compound <= -band:
+        return SentimentResult(label="negative", score=round(abs(compound), 3))
+    return SentimentResult(label="neutral", score=round(1.0 - abs(compound), 3))
