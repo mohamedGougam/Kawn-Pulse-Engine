@@ -2,13 +2,16 @@
 # Do not loosen these to '>=': an unpinned sqlalchemy>=2.0.30 resolved to 2.1.x,
 # which no longer installs greenlet automatically, so the app failed to import and
 # gunicorn exited with status 3 ("Worker failed to boot").
+# sqlalchemy is deliberately kept on the 2.0 line (the one this code was written
+# against; 2.1 is brand new) and gunicorn on 23.x (long-established; 24-26 are new
+# majors). Both were tested with the full suite and on real Postgres.
 # To upgrade: change a pin, run the test suite, then deploy.
 fastapi==0.149.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
 pydantic-settings==2.16.0
 python-dotenv==1.2.4
-sqlalchemy==2.1.5
+sqlalchemy==2.0.55
 sqlmodel==0.0.48
 aiosqlite==0.22.1
 httpx==0.28.1
@@ -19,5 +22,5 @@ aioboto3==15.5.0
 asyncpg==0.32.0
 websockets==17.3
 asyncpraw==8.0.3
-gunicorn==26.2.0
+gunicorn==23.0.0
 greenlet==3.5.6

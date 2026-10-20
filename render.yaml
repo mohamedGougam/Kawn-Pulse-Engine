@@ -3,7 +3,7 @@ services:
     name: kawn-pulse-engine
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python check_import.py
     startCommand: gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers 1 --bind 0.0.0.0:$PORT --max-requests 500 --max-requests-jitter 50 --timeout 120 --graceful-timeout 30
     envVars:
       - key: PYTHON_VERSION
