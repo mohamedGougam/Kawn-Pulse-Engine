@@ -60,8 +60,10 @@ if not IS_SQLITE:
         "idle_in_transaction_session_timeout": "5000",
     }
 
-    _engine_kwargs["pool_size"] = 10
-    _engine_kwargs["max_overflow"] = 10
+    # Small pool: one gunicorn worker on a 512 MB instance, and every
+    # open connection keeps Neon compute awake.
+    _engine_kwargs["pool_size"] = 3
+    _engine_kwargs["max_overflow"] = 2
     _engine_kwargs["pool_timeout"] = 15.0
     _engine_kwargs["pool_recycle"] = 300
     _engine_kwargs["pool_pre_ping"] = True

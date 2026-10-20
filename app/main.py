@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,12 +21,20 @@ from app.streaming.reddit_stream import reddit_stream_service
 from pathlib import Path
 
 
+logger = logging.getLogger("kawn.main")
+
 scheduler_service = SchedulerService()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    # A database outage (e.g. Neon quota exceeded) must not kill the whole
+    # API: start anyway so /health and the UI respond. Routes that need the
+    # database will fail until it is reachable again.
+    try:
+        await init_db()
+    except Exception:
+        logger.error("init_db failed; starting without a working database", exc_info=True)
     scheduler_service.start()
     # Both no-op unless their *_enabled flag is set — see config.py for
     # why they're off by default (need an always-on process, not a

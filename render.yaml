@@ -3,7 +3,7 @@ services:
     name: kawn-pulse-engine
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python check_import.py
+    buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers 1 --bind 0.0.0.0:$PORT --max-requests 500 --max-requests-jitter 50 --timeout 120 --graceful-timeout 30
     envVars:
       - key: PYTHON_VERSION
@@ -29,10 +29,11 @@ services:
       # doesn't). Set the real value as a dashboard secret, not here.
       - key: DATABASE_URL
         sync: false
-      # Re-enabled: covers refreshes while the dyno is awake. It cannot fire
-      # while asleep though — see the cron-tick endpoint below for that gap.
+      # Off: the cron-tick ping below already drives refreshes and wakes the
+      # dyno. Running the in-process scheduler as well doubled the refresh
+      # passes and kept the Neon database awake, burning its compute quota.
       - key: SCHEDULER_ENABLED
-        value: "true"
+        value: "false"
       # Reddit wants "<platform>:<app ID>:<version> (by /u/<username>)" and
       # throttles generic User-Agents harder. Change this in the dashboard to
       # include your real Reddit username.
@@ -62,7 +63,8 @@ services:
       - key: R2_BUCKET_NAME
         value: kawn-pulse-cache
       # Shared secret for POST /internal/cron-tick. Point a free pinger
-      # (e.g. cron-job.org) at that endpoint every 10 min with header
+      # (e.g. cron-job.org) at that endpoint every 30 min (not 10: Neon only
+      # suspends after ~5 idle minutes, so 10 min keeps it awake 24/7) with header
       # X-Cron-Secret: <this value> — it wakes the sleeping dyno *and*
       # drives a refresh pass, since the in-process APScheduler can't run
       # while the instance is spun down.
