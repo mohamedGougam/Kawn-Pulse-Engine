@@ -77,16 +77,6 @@ class Settings(BaseSettings):
     # SEARCH_FETCH_BUDGET_SECONDS.
     search_fetch_budget_seconds: float = 10.0
 
-    # Search latency: don't make everyone wait for the slowest source.
-    # Once this many DIFFERENT sources have returned results, the search only
-    # waits search_straggler_grace_seconds more for the rest, then answers with
-    # what it has (a source that missed the window is backfilled from its R2
-    # cache like any other empty source). Without this a search always waited for
-    # its slowest connector (News / GDELT regularly take 6-8s) even when a dozen
-    # others had answered in under a second. 0 disables the early exit.
-    search_early_exit_min_sources: int = 5
-    search_straggler_grace_seconds: float = 2.0
-
     # Per-source read timeout against the R2 heavy-fetch cache. These reads
     # run in parallel with the live fetch wave (not after it), so this only
     # needs to be generous enough that a slow R2 read doesn't itself become
@@ -156,13 +146,6 @@ class Settings(BaseSettings):
     # already sitting in the R2 heavy-fetch cache from before. Set
     # NEWS_ENABLED=false to genuinely turn it off.
     news_enabled: bool = True
-
-    # News pulls ~15 RSS feeds at once. Feeds that haven't answered after this
-    # many seconds are dropped and the News source returns what the others gave
-    # (it used to be all-or-nothing: one slow feed cancelled the whole source at
-    # connector_timeout_seconds and returned NOTHING). Keep it below
-    # connector_timeout_seconds.
-    news_feed_deadline_seconds: float = 5.0
 
     news_rss_feeds: str = "https://news.google.com/rss/search?q={query}"
 
@@ -287,6 +270,33 @@ class Settings(BaseSettings):
     # cannot put the service into a restart loop.
     memory_recycle_min_uptime_seconds: float = 600.0
 
+    # --- Database outages (Neon free tier quota / suspended compute) --------
+    # A database that refuses connections must not take the whole service
+    # down: startup waits at most db_startup_timeout_seconds, then the app
+    # comes up anyway and retries in the background (backing off to
+    # db_startup_retry_max_seconds); database-backed endpoints answer 503
+    # until it is back, with no redeploy needed.
+    db_startup_timeout_seconds: float = 20.0
+    db_startup_retry_initial_seconds: float = 5.0
+    db_startup_retry_max_seconds: float = 300.0
+
+    # --- Keeping database usage down (Neon bills compute time + storage) ----
+    # The cron pinger hits /internal/cron-tick every ~10 minutes, and every
+    # tick used to start a full refresh pass, so the database was queried
+    # around the clock and could never go idle (Neon suspends compute after
+    # ~5 idle minutes, and active compute hours are what the free quota
+    # counts). A pass now starts at most this often, however many ticks
+    # arrive; the pings still keep the web service itself awake.
+    background_min_pass_interval_seconds: float = 1500.0
+    # Rows were only ever pruned for a topic when that topic was refreshed,
+    # so topics nobody searches any more kept their data forever. Every
+    # storage_prune_interval_seconds, delete expired items everywhere, and
+    # the stored items/cards of topics idle for idle_topic_retention_days
+    # (Discover subjects are never pruned; a pruned topic is rebuilt on its
+    # next search).
+    storage_prune_interval_seconds: float = 21600.0
+    idle_topic_retention_days: int = 30
+
     # Retention window for stored source items. Was 31 days, which let each
     # topic's rows pile up for a full month before any pruning caught up.
     # Cards only draw ~35 items per source, so 14 days is plenty. Override
@@ -296,17 +306,11 @@ class Settings(BaseSettings):
 
     # AI
     ai_sentiment_model: str = "cardiffnlp/twitter-roberta-base-sentiment-latest"
-    # Lexicon fallback (used when transformers isn't installed, i.e. on Render):
-    # a VADER compound score within +/- this band counts as "neutral".
-    sentiment_neutral_band: float = 0.2
     ai_summary_model: str = "sshleifer/distilbart-cnn-12-6"
 
    
     # Scheduler
-    # Default OFF: render.yaml is not always applied (dashboard start command),
-    # and an always-on in-process scheduler keeps Neon compute awake 24/7.
-    # cron-tick (external pinger) drives refreshes instead.
-    scheduler_enabled: bool = False
+    scheduler_enabled: bool = True
     scheduler_refresh_minutes: int = 30
 
     Discover_subjects: list[str] = [

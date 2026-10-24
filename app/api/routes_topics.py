@@ -18,11 +18,10 @@ from app.models.schemas import (
     TopicSummary as TopicSummarySchema,
 )
 from app.repositories.pulse_card_repository import PulseCardRepository
-from app.services.category_service import annotate_and_filter
-from app.services.feed_diversity import mix_feed
 from app.services.outlet_registry import filter_visible_cards
 from app.repositories.topic_repository import TopicRepository
 from app.services.aggregation_service import AggregationService
+from app.db_errors import describe, is_db_unavailable
 from app.services.refresh_gate import RefreshBusy
 from app.services.ai_service import AIService
 
@@ -93,6 +92,13 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
             headers={"Retry-After": "10"},
         )
     except Exception as e:
+        if is_db_unavailable(e):
+            logger.warning("search for %r failed, database unavailable: %s", req.query, describe(e))
+            raise HTTPException(
+                status_code=503,
+                detail="The database is temporarily unavailable. Please retry in a little while.",
+                headers={"Retry-After": "30"},
+            )
         logger.exception("refresh_topic failed for query=%r language=%r", req.query, req.language)
         raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
 
@@ -124,7 +130,7 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
         )
         for c in cards_db
     ]
-    cards = annotate_and_filter(filter_visible_cards(cards, req.country), req.country, req.category)
+    cards = filter_visible_cards(cards, req.country)
 
     breakdown = await _get_source_breakdown(session, topic_id)
 
@@ -141,7 +147,6 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
             "cached_sources": refresh_result.cached_sources,
             "source_freshness": refresh_result.source_freshness,
             "disabled_sources": refresh_result.disabled_sources,
-            "timings": refresh_result.timings,
         },
     )
 
@@ -165,10 +170,10 @@ async def Backgroundrefresh(query: str):
 async def Getexplorefeed(
     background_tasks: BackgroundTasks,
     country: str | None = Query(default=None, max_length=2),
-    category: str | None = Query(default=None, max_length=20, description="all | near_you | newsletters | social_media"),
     session: AsyncSession = Depends(_session_dep)
 ) -> list[PulseCardSchema]:
     from app.config import settings
+    import random
 
     subjects = settings.Discover_subjects
     topics_db = []
@@ -248,17 +253,14 @@ async def Getexplorefeed(
     ]
     results.extend(preview_results)
     results = filter_visible_cards(results, country)
-    results = annotate_and_filter(results, country, category)
-    # Mix AFTER the tab filter so every tab is varied on its own, not just "All".
-    # Replaces a plain random.shuffle, which let one source fill the feed.
-    return mix_feed(results)
+    random.shuffle(results)
+    return results
 
 
 @router.post("/bulk-cards", response_model=list[PulseCardSchema])
 async def Getbulkcards(
     req: Bulkcardsrequest,
     country: str | None = Query(default=None, max_length=2),
-    category: str | None = Query(default=None, max_length=20),
     session: AsyncSession = Depends(_session_dep),
 ) -> list[PulseCardSchema]:
     if not req.topic_ids:
@@ -290,7 +292,7 @@ async def Getbulkcards(
         )
         for c in cards_db
     ]
-    return annotate_and_filter(filter_visible_cards(cards, country), country, category)
+    return filter_visible_cards(cards, country)
 
 
 @router.get("/{topic_id}/cards", response_model=list[PulseCardSchema])
@@ -299,7 +301,6 @@ async def get_cards(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     country: str | None = Query(default=None, max_length=2),
-    category: str | None = Query(default=None, max_length=20),
     session: AsyncSession = Depends(_session_dep),
 ) -> list[PulseCardSchema]:
     topic = await topic_repo.get_by_id(session, topic_id)
@@ -324,7 +325,7 @@ async def get_cards(
         )
         for c in cards_db
     ]
-    return annotate_and_filter(filter_visible_cards(cards, country), country, category)
+    return filter_visible_cards(cards, country)
 
 
 @router.get("/trending", response_model=list[TopicSchema])
@@ -370,7 +371,7 @@ async def get_single_card(
     topic = await topic_repo.get_by_id(session, card.topic_id)
     topic_query = topic.query if topic else "General"
 
-    single = PulseCardSchema(
+    return PulseCardSchema(
         id=card.id,
         topic=topic_query,
         quote=card.quote,
@@ -384,6 +385,5 @@ async def get_single_card(
         display_label=card.display_label,
         created_at=card.created_at,
     )
-    return annotate_and_filter([single], None)[0]
 
 

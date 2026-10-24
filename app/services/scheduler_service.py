@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import logging
 from datetime import datetime
 
@@ -8,6 +9,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.db_errors import describe, is_db_unavailable
+from app.services import storage_prune
 from app.database import get_session
 from app.models.db_models import Topic
 from app.repositories.topic_repository import TopicRepository
@@ -53,6 +56,7 @@ class SchedulerService:
         self.aggregation = AggregationService()
         self.topic_repo = TopicRepository()
         self._tick_lock = asyncio.Lock()
+        self._last_pass_started: float | None = None
 
     def start(self) -> None:
         if not settings.scheduler_enabled:
@@ -74,8 +78,32 @@ class SchedulerService:
             # nothing important gets starved by being skipped once.
             return
 
+        # Throttle: the cron pinger fires every ~10 minutes and the interval
+        # job every scheduler_refresh_minutes, but a pass queries the database
+        # for a minute or more each time. Doing that on every tick kept Neon's
+        # compute awake around the clock and burned through its free quota.
+        # The ping still wakes the web service; only the DB work is spaced out.
+        now = time.monotonic()
+        if (
+            self._last_pass_started is not None
+            and now - self._last_pass_started < settings.background_min_pass_interval_seconds
+        ):
+            logger.debug("refresh pass skipped: previous one started %.0fs ago", now - self._last_pass_started)
+            return
+
         async with self._tick_lock:
-            await self._run_refresh_pass()
+            self._last_pass_started = now
+            try:
+                await self._run_refresh_pass()
+                await storage_prune.maybe_prune()
+            except Exception as e:
+                if is_db_unavailable(e):
+                    # Don't flood the logs with a traceback every tick while
+                    # the database is down or over quota; it is retried on
+                    # the next pass.
+                    logger.warning("refresh pass skipped, database unavailable: %s", describe(e))
+                else:
+                    logger.exception("refresh pass failed")
 
     async def _run_refresh_pass(self) -> None:
         candidates: dict[str, Topic] = {}

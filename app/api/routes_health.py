@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 
@@ -10,6 +11,18 @@ router = APIRouter()
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
+
+
+@router.get("/health/db")
+async def health_db(request: Request) -> JSONResponse:
+    """Database status without opening a log file: 200 when the service is
+    fully started, 503 (with the reason) while the database is unavailable,
+    e.g. a Neon project that is over its quota. /health stays DB-free so the
+    host's health check never flaps because of the database."""
+    state = request.app.state
+    if getattr(state, "db_ready", False):
+        return JSONResponse({"db": "ready"})
+    return JSONResponse({"db": "unavailable", "error": getattr(state, "db_error", None)}, status_code=503)
 
 
 @router.post("/internal/cron-tick")
