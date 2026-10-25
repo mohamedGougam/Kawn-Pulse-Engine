@@ -42,7 +42,7 @@ services:
       - key: NEWS_RSS_FEEDS
         value: https://news.google.com/rss/search?q={query}
       - key: REDDIT_CLIENT_ID
-        sync: false
+        sync: false   #TODO: add this
       - key: REDDIT_CLIENT_SECRET
         sync: false
       - key: YOUTUBE_API_KEY
@@ -55,13 +55,13 @@ services:
         sync: false
       # Cloudflare R2 — heavy-fetch JSON cache (/sources/<source>/<topic>.json)
       - key: R2_ACCOUNT_ID
-        sync: false
+        value: 9fee25112d50597e98c8261d4e2f4185
       - key: R2_ACCESS_KEY_ID
-        sync: false
+        value: 592ea017ac9acd51cc960bbe1e74cbc3
       - key: R2_SECRET_ACCESS_KEY
-        sync: false
+        value: 95f9bb862c60bea20bee94a84a2b3212e8363120a0917fa29a8ce6021220ed6c
       - key: R2_BUCKET_NAME
-        value: kawn-pulse-cache
+        value: paulse
       # Shared secret for POST /internal/cron-tick. Point a free pinger
       # (e.g. cron-job.org) at that endpoint every 30 min (not 10: Neon only
       # suspends after ~5 idle minutes, so 10 min keeps it awake 24/7) with header
