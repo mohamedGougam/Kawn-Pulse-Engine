@@ -167,6 +167,11 @@ def _dedup_key(item: NormalizedItem) -> tuple[str, str]:
     return (item.source, item.source_url)
 
 
+# Fast-tier sources: searched live and directly. Every other source is
+# slower/heavier, so its R2 cache copy is read in parallel with the live fetch.
+_LIGHT_SOURCES = frozenset({"Bluesky", "Reddit", "Mastodon", "YouTube", "HackerNews", "Wikipedia"})
+
+
 class AggregationService:
     def __init__(self) -> None:
         self.topic_repo = TopicRepository()
@@ -287,13 +292,7 @@ class AggregationService:
     ) -> RefreshResult:
         t_start = time.monotonic()
         source_seconds: dict[str, float] = {}
-        topic = await self.topic_repo.upsert(session, query)
-        if record_search:
-            # Only real user-triggered refreshes (search, manual refresh)
-            # count toward the priority-queue interest signal — see
-            # TopicRepository.record_search.
-            await self.topic_repo.record_search(session, topic)
-
+        done_at: dict[str, float] = {}
         # Fetch from enabled connectors fully concurrently — no semaphore cap.
         # These used to be capped at max_concurrent_connectors (3) at a time,
         # so with 9 connectors in fetch_plan a search could spend two extra
@@ -311,6 +310,7 @@ class AggregationService:
             try:
                 return await self._safe_fetch(connector, query, per, fallback_source=fallback_source, language=language)
             finally:
+                done_at[fallback_source] = time.monotonic()
                 source_seconds[fallback_source] = round(time.monotonic() - t0, 2)
 
         # Overall budget for this refresh's live-fetch stage. asyncio.gather
@@ -338,15 +338,45 @@ class AggregationService:
                 logger.warning("%s.enabled() raised, treating as disabled: %s", fallback_source, e)
                 enabled_by_source[fallback_source] = False
 
+        t_fetch = time.monotonic()  # budget/grace clocks start with the fetches
         task_by_source: dict[str, asyncio.Task] = {
             fallback_source: asyncio.create_task(_bounded_fetch(connector, fallback_source))
             for connector, fallback_source in fetch_plan
         }
 
+        # R2 (cache) and Neon (database) run IN PARALLEL with the live fetch:
+        #  * the cache copy of every slower source is requested now, so it is
+        #    already in hand when the live wave ends (before, the cache reads
+        #    only started after the wave and added up to
+        #    heavy_cache_read_timeout_seconds on top of it);
+        #  * the topic row is upserted while the connectors are already
+        #    running, which hides Neon's cold-start wake-up from the search.
+        prefetch_by_source: dict[str, asyncio.Task] = {}
+        if settings.parallel_cache_prefetch and settings.r2_configured():
+            for _connector, source in fetch_plan:
+                if source not in _LIGHT_SOURCES and enabled_by_source.get(source, True):
+                    pre = asyncio.create_task(self._read_cached_source(source, query))
+                    prefetch_by_source[source] = pre
+                    # asyncio only keeps weak references to running tasks.
+                    self._background_tasks.add(pre)
+                    pre.add_done_callback(self._background_tasks.discard)
+
+        try:
+            topic = await self.topic_repo.upsert(session, query)
+            if record_search:
+                # Only real user-triggered refreshes (search, manual refresh)
+                # count toward the priority-queue interest signal — see
+                # TopicRepository.record_search.
+                await self.topic_repo.record_search(session, topic)
+        except BaseException:
+            # Database unavailable: do not leave the fetches running.
+            for _t in [*task_by_source.values(), *prefetch_by_source.values()]:
+                _t.cancel()
+            raise
+
         # Wait for the connectors, but not necessarily for ALL of them: once
         # enough different sources have produced results, give the rest only a
         # short grace period (see search_early_exit_min_sources in config).
-        t_fetch = time.monotonic()
         budget = settings.search_fetch_budget_seconds
         min_sources = settings.search_early_exit_min_sources
         grace = settings.search_straggler_grace_seconds
@@ -374,7 +404,8 @@ class AggregationService:
                 except Exception:
                     pass
             if enough_at is None and min_sources > 0 and len(have_results) >= min_sources:
-                enough_at = time.monotonic()
+                times = sorted(done_at[n] for n in have_results if n in done_at)
+                enough_at = times[min_sources - 1] if len(times) >= min_sources else time.monotonic()
         for t in pending:
             t.cancel()
         stragglers = [source for source, t in task_by_source.items() if t in pending]
@@ -454,7 +485,8 @@ class AggregationService:
         # failed source costs one R2 round-trip, not one per source in turn.
         # Disabled sources are excluded - see the enabled_by_source comment.
         cache_task_by_source: dict[str, asyncio.Task] = {
-            source: asyncio.create_task(self._read_cached_source(source, topic.query))
+            source: prefetch_by_source.get(source)
+            or asyncio.create_task(self._read_cached_source(source, topic.query))
             for source in empty_live_sources
         }
 

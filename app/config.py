@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     # means that source shows up in missing_sources instead of cached_sources.
     heavy_cache_read_timeout_seconds: float = 2.0
 
+    # Start the R2 cache reads for the slower sources (everything except the
+    # fast tier) at the same moment as the live fetch, and overlap the Neon
+    # topic upsert with it, instead of doing them one after another.
+    # Set PARALLEL_CACHE_PREFETCH=false to get the old sequential behaviour.
+    parallel_cache_prefetch: bool = True
+
     # Shared secret for the external cron heartbeat (cron-job.org etc.) that
     # wakes the free-tier dyno and drives scheduled refreshes, since an
     # in-process APScheduler job cannot fire while the instance is asleep.

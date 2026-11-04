@@ -207,3 +207,75 @@ async def sources_diagnostics(
 
     summary = {s: sum(1 for r in results if r["status"] == s) for s in (OK, EMPTY, DISABLED, ERROR, TIMEOUT)}
     return {"topic": topic, "summary": summary, "warnings": warnings, "results": results}
+
+
+@router.get("/storage-check")
+async def storage_check(x_cron_secret: str | None = Header(default=None)) -> dict:
+    """Which database is this deployment really using, and can it reach R2?
+
+    Protected by the same X-Cron-Secret header as the other operational
+    endpoints. It never returns passwords or keys: for the database it shows
+    only the dialect, host and database name. The R2 test writes a tiny file
+    to <prefix>/_diagnostics/ping.json (left in place so you can see it in the
+    bucket), reads it back, and reports the exact error if anything fails.
+    """
+    _require_secret(x_cron_secret)
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+
+    from app.database import ASYNC_DATABASE_URL, IS_SQLITE, engine
+    from app.storage.object_store import object_store
+
+    db: dict = {
+        "backend": "sqlite" if IS_SQLITE else "postgres",
+        "USE_POSTGRES": settings.use_postgres,
+    }
+    if IS_SQLITE:
+        db["note"] = "SQLite is wiped on restart on Render's free plan. For Neon set USE_POSTGRES=true and DATABASE_URL."
+    else:
+        url = make_url(ASYNC_DATABASE_URL)
+        db["host"] = url.host
+        db["database"] = url.database
+    try:
+        started = time.perf_counter()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db["connect"] = "ok"
+        db["latency_ms"] = round((time.perf_counter() - started) * 1000)
+    except Exception as e:  # report the cause instead of failing the endpoint
+        db["connect"] = "failed"
+        db["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+
+    r2: dict = {
+        "configured": settings.r2_configured(),
+        "bucket": settings.r2_bucket_name,
+        "key_prefix": settings.r2_key_prefix,
+    }
+    if not r2["configured"]:
+        r2["note"] = "R2_ACCOUNT_ID, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must all be set."
+    else:
+        key = f"{settings.r2_key_prefix}/_diagnostics/ping.json"
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        try:
+            client = await object_store._get_client()
+            await client.put_object(
+                Bucket=settings.r2_bucket_name,
+                Key=key,
+                Body=('{"ok": true, "written_at": "%s"}' % stamp).encode(),
+                ContentType="application/json",
+            )
+            resp = await client.get_object(Bucket=settings.r2_bucket_name, Key=key)
+            body = await resp["Body"].read()
+            r2["write_read"] = "ok" if stamp.encode() in body else "mismatch"
+            r2["test_object"] = key
+        except Exception as e:
+            r2["write_read"] = "failed"
+            r2["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+
+    return {
+        "database": db,
+        "r2": r2,
+        "ENABLE_MOCK_DATA": settings.enable_mock_data,
+        "SCHEDULER_ENABLED": settings.scheduler_enabled,
+        "r2_note": "R2 only caches the heavy sources (News, Dev.to, Hashnode) and only after a live fetch returns items.",
+    }

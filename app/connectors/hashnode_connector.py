@@ -67,7 +67,16 @@ class HashnodeConnector:
                 headers={"User-Agent": settings.reddit_user_agent, "Content-Type": "application/json"},
             )
             resp.raise_for_status()
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError:
+                # Say what actually came back (HTML block page? empty body?)
+                # instead of a bare "Expecting value: line 1 column 1".
+                snippet = " ".join((resp.text or "")[:120].split())
+                raise ValueError(
+                    f"Hashnode returned non-JSON (HTTP {resp.status_code}, "
+                    f"content-type {resp.headers.get('content-type')!r}): {snippet!r}"
+                ) from None
 
         tag = ((data or {}).get("data") or {}).get("tag")
         if not tag:
