@@ -4,8 +4,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes_health import router as health_router
@@ -80,20 +81,50 @@ async def ui_uppercase() -> RedirectResponse:
     return RedirectResponse(url="/ui", status_code=307)
 
 
+_legacy_client: httpx.AsyncClient | None = None
+_HOP_BY_HOP = {"host", "content-length", "connection", "keep-alive", "transfer-encoding", "upgrade", "te"}
+_DROP_RESPONSE = {"content-length", "content-encoding", "transfer-encoding", "connection", "keep-alive"}
+
+
+def _get_legacy_client() -> httpx.AsyncClient:
+    # One shared client for every forwarded request (a new one per request
+    # would waste memory on the 512 MB free instance).
+    global _legacy_client
+    if _legacy_client is None or _legacy_client.is_closed:
+        _legacy_client = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0), follow_redirects=False)
+    return _legacy_client
+
+
 @app.middleware("http")
 async def legacy_host_redirect(request, call_next):
-    """Send visitors of the old deployment's URL to the new one."""
+    """Old deployment's URL -> new deployment (proxy or 307, see redirect_mode)."""
     old_hosts = {h.strip().lower() for h in settings.redirect_old_hosts.split(",") if h.strip()}
     target = settings.redirect_target_url.rstrip("/")
-    if old_hosts and target and request.url.path != "/health":
-        host = (request.headers.get("host") or "").split(":")[0].lower()
-        if host in old_hosts:
-            url = target + request.url.path
-            if request.url.query:
-                url += "?" + request.url.query
-            # 307 keeps the HTTP method (POST stays POST) for API clients.
-            return RedirectResponse(url, status_code=307)
-    return await call_next(request)
+    if not (old_hosts and target) or request.url.path == "/health":
+        return await call_next(request)
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if host not in old_hosts:
+        return await call_next(request)
+
+    url = target + request.url.path
+    if request.url.query:
+        url += "?" + request.url.query
+
+    if settings.redirect_mode != "proxy":
+        # 307 keeps the HTTP method (POST stays POST) for clients that follow it.
+        return RedirectResponse(url, status_code=307)
+
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    headers["x-forwarded-host"] = host
+    try:
+        upstream = await _get_legacy_client().request(
+            request.method, url, headers=headers, content=await request.body()
+        )
+    except httpx.HTTPError as e:
+        logging.getLogger(__name__).warning("legacy proxy to %s failed: %s", url, e)
+        return JSONResponse({"detail": "upstream unavailable"}, status_code=502)
+    out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESPONSE}
+    return Response(content=upstream.content, status_code=upstream.status_code, headers=out_headers)
 
 
 app.include_router(health_router)

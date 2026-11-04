@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # Set REDIRECT_OLD_HOSTS= (empty) on a deployment to turn this off.
     redirect_old_hosts: str = "kawn-pulse-engine.onrender.com"
     redirect_target_url: str = "https://kawn-pulse-engine-ucrl.onrender.com"
+    # "proxy"    = the old URL forwards each request to the new service and
+    #              returns its answer (works for POST bodies and for clients
+    #              that do not follow redirects). Slower: the old service must
+    #              be awake.
+    # "redirect" = plain HTTP 307 redirect to the new URL.
+    redirect_mode: str = "proxy"
 
     # render.yaml marks DATABASE_URL as `sync: false`, so Render creates the
     # env var but leaves it as an empty string until someone pastes a real
