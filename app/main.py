@@ -80,6 +80,22 @@ async def ui_uppercase() -> RedirectResponse:
     return RedirectResponse(url="/ui", status_code=307)
 
 
+@app.middleware("http")
+async def legacy_host_redirect(request, call_next):
+    """Send visitors of the old deployment's URL to the new one."""
+    old_hosts = {h.strip().lower() for h in settings.redirect_old_hosts.split(",") if h.strip()}
+    target = settings.redirect_target_url.rstrip("/")
+    if old_hosts and target and request.url.path != "/health":
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        if host in old_hosts:
+            url = target + request.url.path
+            if request.url.query:
+                url += "?" + request.url.query
+            # 307 keeps the HTTP method (POST stays POST) for API clients.
+            return RedirectResponse(url, status_code=307)
+    return await call_next(request)
+
+
 app.include_router(health_router)
 app.include_router(topics_router)
 app.include_router(sources_router)

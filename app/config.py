@@ -16,6 +16,18 @@ class Settings(BaseSettings):
     #   postgresql+asyncpg://user:pass@host/dbname
     database_url: str = "sqlite:///./kawn_pulse.db"
 
+    # Master switch for the external (Neon) Postgres database.
+    # False (default) = ignore DATABASE_URL and use local SQLite.
+    # Set USE_POSTGRES=true on any deployment that should use DATABASE_URL.
+    use_postgres: bool = False
+
+    # Legacy-URL redirect. Requests whose Host is listed in REDIRECT_OLD_HOSTS
+    # (comma-separated, no https://) are redirected to REDIRECT_TARGET_URL,
+    # keeping path and query string. /health is never redirected.
+    # Set REDIRECT_OLD_HOSTS= (empty) on a deployment to turn this off.
+    redirect_old_hosts: str = "kawn-pulse-engine.onrender.com"
+    redirect_target_url: str = "https://kawn-pulse-engine-ucrl.onrender.com"
+
     # render.yaml marks DATABASE_URL as `sync: false`, so Render creates the
     # env var but leaves it as an empty string until someone pastes a real
     # Postgres URL into the dashboard. Pydantic treats "" as a provided value
