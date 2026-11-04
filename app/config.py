@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     #   postgresql+asyncpg://user:pass@host/dbname
     database_url: str = "sqlite:///./kawn_pulse.db"
 
+    # Master switch for the external (Neon) Postgres database.
+    # False (default) = ignore DATABASE_URL and use local SQLite.
+    # Set USE_POSTGRES=true on any deployment that should use DATABASE_URL.
+    use_postgres: bool = False
+
     # render.yaml marks DATABASE_URL as `sync: false`, so Render creates the
     # env var but leaves it as an empty string until someone pastes a real
     # Postgres URL into the dashboard. Pydantic treats "" as a provided value

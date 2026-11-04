@@ -28,7 +28,9 @@ def _to_async_url(url: str) -> str:
     return url
 
 
-ASYNC_DATABASE_URL = _to_async_url(settings.database_url)
+# Neon/Postgres is opt-in: without USE_POSTGRES=true the app uses SQLite.
+_effective_db_url = settings.database_url if settings.use_postgres else "sqlite:///./kawn_pulse.db"
+ASYNC_DATABASE_URL = _to_async_url(_effective_db_url)
 IS_SQLITE = ASYNC_DATABASE_URL.startswith("sqlite")
 
 _connect_args: dict = {}
