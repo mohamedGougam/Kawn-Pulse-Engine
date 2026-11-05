@@ -47,6 +47,7 @@ class SourceHealth:
     consecutive_failures: int = 0
     total_calls: int = 0
     total_failures: int = 0
+    last_failure_monotonic: float | None = None  # not exposed; drives the breaker
 
     def as_dict(self) -> dict:
         return {
@@ -90,12 +91,33 @@ def record_failure(source: str, error: ErrorInfo, started_monotonic: float, *, t
     e.total_calls += 1
     e.total_failures += 1
     e.consecutive_failures += 1
+    e.last_failure_monotonic = time.monotonic()
     e.last_status = TIMEOUT if timed_out else ERROR
     e.last_checked_at = _now_iso()
     e.last_item_count = 0
     e.last_latency_ms = int((time.monotonic() - started_monotonic) * 1000)
     e.last_error = error.as_dict()
     e.last_error_at = e.last_checked_at
+
+
+def breaker_open_for(source: str) -> float | None:
+    """Circuit breaker. Seconds left in the cooldown if `source` has failed
+    connector_breaker_threshold times in a row (timeouts count), else None.
+
+    While open, AggregationService._safe_fetch skips the source instead of
+    spending a request and up to connector_timeout_seconds on it. Once the
+    cooldown has passed this returns None, so the next search is a probe: a
+    success (record_success) closes the breaker, another failure re-opens it
+    for a full cooldown. A threshold of 0 disables the breaker.
+    """
+    threshold = settings.connector_breaker_threshold
+    if threshold <= 0:
+        return None
+    e = _health.get(source)
+    if e is None or e.consecutive_failures < threshold or e.last_failure_monotonic is None:
+        return None
+    left = settings.connector_breaker_cooldown_seconds - (time.monotonic() - e.last_failure_monotonic)
+    return left if left > 0 else None
 
 
 def snapshot() -> dict[str, dict]:

@@ -424,6 +424,14 @@ class AggregationService:
             try:
                 live_items_by_source[source] = t.result()
             except Exception:
+                # _safe_fetch catches ordinary connector errors itself, so
+                # anything arriving here is a bug in the engine (e.g. a missing
+                # function). Say so loudly instead of silently turning every
+                # source into "empty", which looks like "no results found".
+                logger.error(
+                    "live fetch crashed for source=%s query=%r; treating it as empty",
+                    source, query, exc_info=True,
+                )
                 live_items_by_source[source] = []
 
         raw_items: list = [item for batch in live_items_by_source.values() for item in batch]
