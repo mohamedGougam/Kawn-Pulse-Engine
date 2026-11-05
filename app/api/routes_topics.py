@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
@@ -117,7 +118,17 @@ async def _search_response(
         )
         for c in cards_db
     ]
-    cards = annotate_and_filter(filter_visible_cards(cards, req.country), req.country, req.category)
+    stored = len(cards)
+    visible = filter_visible_cards(cards, req.country)
+    cards = annotate_and_filter(visible, req.country, req.category)
+    # One line per search so "the app shows nothing" can be traced from the
+    # server log: were there no stored cards, or did country/tab filtering
+    # remove them all?
+    logging.getLogger("kawn.search").log(
+        logging.INFO if cards else logging.WARNING,
+        "search %r instant=%s country=%s category=%s stored=%d after_country=%d returned=%d",
+        topic.query, meta.get("instant_cache"), req.country, req.category, stored, len(visible), len(cards),
+    )
     breakdown = await _get_source_breakdown(session, topic.id)
     return SearchResponse(
         topic=_topic_schema(topic),
