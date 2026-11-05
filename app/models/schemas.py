@@ -65,12 +65,6 @@ class PulseCard(BaseModel):
     # from cache, no AI) — see AggregationService.build_cache_preview_cards.
     # Absent/False for every normal DB-backed card.
     is_preview: bool = False
-    # Feed-tab info, computed at serve time (never stored - "near_you" depends
-    # on the viewer's country). See app.services.category_service.
-    #   category: "social" | "newsletter" | "other"
-    #   near_you: a regional outlet meant for the viewer's country
-    category: str = "other"
-    near_you: bool = False
 
 
 class TopicSummary(BaseModel):
@@ -86,12 +80,6 @@ class TopicSummary(BaseModel):
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=160)
     language: Optional[str] = Field(default=None, max_length=8)
-    # ISO 3166-1 alpha-2 (e.g. "FR"), the caller's resolved locale. Used only
-    # to gate regional outlets like France24 (see app.services.outlet_registry)
-    # — global outlets and every non-curated source are unaffected by it.
-    country: Optional[str] = Field(default=None, max_length=2)
-    # Optional feed tab for the returned cards: all | near_you | newsletters | social_media
-    category: Optional[str] = Field(default=None, max_length=20)
 
 
 class SearchResponse(BaseModel):

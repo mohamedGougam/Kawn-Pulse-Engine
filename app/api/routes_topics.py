@@ -20,9 +20,7 @@ from app.models.schemas import (
     TopicSummary as TopicSummarySchema,
 )
 from app.repositories.pulse_card_repository import PulseCardRepository
-from app.services.category_service import annotate_and_filter
 from app.services.feed_diversity import mix_feed
-from app.services.outlet_registry import filter_visible_cards
 from app.repositories.topic_repository import TopicRepository
 from app.services.aggregation_service import AggregationService
 from app.services.refresh_gate import RefreshBusy
@@ -118,16 +116,9 @@ async def _search_response(
         )
         for c in cards_db
     ]
-    stored = len(cards)
-    visible = filter_visible_cards(cards, req.country)
-    cards = annotate_and_filter(visible, req.country, req.category)
-    # One line per search so "the app shows nothing" can be traced from the
-    # server log: were there no stored cards, or did country/tab filtering
-    # remove them all?
     logging.getLogger("kawn.search").log(
         logging.INFO if cards else logging.WARNING,
-        "search %r instant=%s country=%s category=%s stored=%d after_country=%d returned=%d",
-        topic.query, meta.get("instant_cache"), req.country, req.category, stored, len(visible), len(cards),
+        "search %r instant=%s returned=%d", topic.query, meta.get("instant_cache"), len(cards),
     )
     breakdown = await _get_source_breakdown(session, topic.id)
     return SearchResponse(
@@ -159,7 +150,6 @@ async def search_topic(
         # 8-10s, which is what made every repeat search feel broken. If the
         # stored result is older than search_cache_fresh_seconds it is still
         # returned now, and refreshed in the background for next time. The
-        # same filters (country gating, tab) are applied as on the live path.
         # A search that names a language always goes live, since language
         # changes what the news sources return.
         if settings.search_instant_cache_enabled and not language:
@@ -229,8 +219,6 @@ async def Backgroundrefresh(query: str):
 @router.get("/explore-feed", response_model=list[PulseCardSchema])
 async def Getexplorefeed(
     background_tasks: BackgroundTasks,
-    country: str | None = Query(default=None, max_length=2),
-    category: str | None = Query(default=None, max_length=20, description="all | near_you | newsletters | social_media"),
     session: AsyncSession = Depends(_session_dep)
 ) -> list[PulseCardSchema]:
     from app.config import settings
@@ -312,9 +300,6 @@ async def Getexplorefeed(
         for c in cards_db
     ]
     results.extend(preview_results)
-    results = filter_visible_cards(results, country)
-    results = annotate_and_filter(results, country, category)
-    # Mix AFTER the tab filter so every tab is varied on its own, not just "All".
     # Replaces a plain random.shuffle, which let one source fill the feed.
     return mix_feed(results)
 
@@ -322,8 +307,6 @@ async def Getexplorefeed(
 @router.post("/bulk-cards", response_model=list[PulseCardSchema])
 async def Getbulkcards(
     req: Bulkcardsrequest,
-    country: str | None = Query(default=None, max_length=2),
-    category: str | None = Query(default=None, max_length=20),
     session: AsyncSession = Depends(_session_dep),
 ) -> list[PulseCardSchema]:
     if not req.topic_ids:
@@ -355,7 +338,7 @@ async def Getbulkcards(
         )
         for c in cards_db
     ]
-    return annotate_and_filter(filter_visible_cards(cards, country), country, category)
+    return cards
 
 
 @router.get("/{topic_id}/cards", response_model=list[PulseCardSchema])
@@ -363,8 +346,6 @@ async def get_cards(
     topic_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    country: str | None = Query(default=None, max_length=2),
-    category: str | None = Query(default=None, max_length=20),
     session: AsyncSession = Depends(_session_dep),
 ) -> list[PulseCardSchema]:
     topic = await topic_repo.get_by_id(session, topic_id)
@@ -389,7 +370,7 @@ async def get_cards(
         )
         for c in cards_db
     ]
-    return annotate_and_filter(filter_visible_cards(cards, country), country, category)
+    return cards
 
 
 @router.get("/trending", response_model=list[TopicSchema])
@@ -449,6 +430,6 @@ async def get_single_card(
         display_label=card.display_label,
         created_at=card.created_at,
     )
-    return annotate_and_filter([single], None)[0]
+    return single
 
 
