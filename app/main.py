@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -116,13 +117,27 @@ async def legacy_host_redirect(request, call_next):
 
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     headers["x-forwarded-host"] = host
+    # Never forward the client's Accept-Encoding. httpx can only decode gzip/
+    # deflate here (no brotli/zstd libs), and this proxy strips the upstream's
+    # Content-Encoding header, so a client that accepts "br" would get raw
+    # compressed bytes back as if they were JSON.
+    headers = {k: v for k, v in headers.items() if k.lower() != "accept-encoding"}
+    headers["accept-encoding"] = "identity"
+    t0 = time.monotonic()
     try:
         upstream = await _get_legacy_client().request(
             request.method, url, headers=headers, content=await request.body()
         )
     except httpx.HTTPError as e:
-        logging.getLogger(__name__).warning("legacy proxy to %s failed: %s", url, e)
+        logging.getLogger("kawn.legacy").warning(
+            "legacy proxy %s %s failed after %.1fs: %s: %s",
+            request.method, request.url.path, time.monotonic() - t0, type(e).__name__, e,
+        )
         return JSONResponse({"detail": "upstream unavailable"}, status_code=502)
+    logging.getLogger("kawn.legacy").info(
+        "legacy proxy %s %s -> %s %d in %.1fs",
+        request.method, request.url.path, target, upstream.status_code, time.monotonic() - t0,
+    )
     out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESPONSE}
     return Response(content=upstream.content, status_code=upstream.status_code, headers=out_headers)
 
