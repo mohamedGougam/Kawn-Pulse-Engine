@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
@@ -78,35 +79,27 @@ def _summary_schema(s: TopicSummaryDB) -> TopicSummarySchema:
     )
 
 
-@router.post("/search", response_model=SearchResponse)
-async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_session_dep)) -> SearchResponse:
-    import logging
-    import traceback
-    logger = logging.getLogger("kawn.search")
+_query_locks: dict[str, asyncio.Lock] = {}
 
-    try:
-        refresh_result = await aggregation.refresh_topic(session, req.query, language=(req.language or None))
-    except RefreshBusy as e:
-        raise HTTPException(
-            status_code=503,
-            detail="The server is busy refreshing other topics; please retry in a few seconds.",
-            headers={"Retry-After": "10"},
-        )
-    except Exception as e:
-        logger.exception("refresh_topic failed for query=%r language=%r", req.query, req.language)
-        raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
 
-    topic_id = refresh_result.topic_id
+def _query_lock(query: str) -> asyncio.Lock:
+    """One lock per normalized query, so identical searches arriving together
+    (double click, a retry after a slow response) run one live refresh and the
+    rest are answered from its result instead of each doing a full fetch."""
+    key = query.strip().lower()
+    lock = _query_locks.get(key)
+    if lock is None:
+        if len(_query_locks) > 500:  # bounded: drop locks nobody holds
+            for k in [k for k, v in _query_locks.items() if not v.locked()]:
+                _query_locks.pop(k, None)
+        lock = _query_locks[key] = asyncio.Lock()
+    return lock
 
-    topic = await topic_repo.get_by_id(session, topic_id)
-    if not topic:
-        raise HTTPException(status_code=500, detail="Topic not created")
 
-    summary = await _get_summary(session, topic_id)
-    if not summary:
-        raise HTTPException(status_code=500, detail="Summary not created")
-
-    cards_db = await card_repo.list_for_topic(session, topic_id, page=1, page_size=50)
+async def _search_response(
+    session: AsyncSession, req: SearchRequest, topic: TopicDB, summary: TopicSummaryDB, meta: dict
+) -> SearchResponse:
+    cards_db = await card_repo.list_for_topic(session, topic.id, page=1, page_size=50)
     cards = [
         PulseCardSchema(
             id=c.id,
@@ -125,25 +118,86 @@ async def search_topic(req: SearchRequest, session: AsyncSession = Depends(_sess
         for c in cards_db
     ]
     cards = annotate_and_filter(filter_visible_cards(cards, req.country), req.country, req.category)
-
-    breakdown = await _get_source_breakdown(session, topic_id)
-
+    breakdown = await _get_source_breakdown(session, topic.id)
     return SearchResponse(
         topic=_topic_schema(topic),
         summary=_summary_schema(summary),
         source_breakdown=breakdown,
         cards=cards,
-        meta={
-            "refreshed": True,
-            "language": (req.language or None),
-            "partial": refresh_result.partial,
-            "missing_sources": refresh_result.missing_sources,
-            "cached_sources": refresh_result.cached_sources,
-            "source_freshness": refresh_result.source_freshness,
-            "disabled_sources": refresh_result.disabled_sources,
-            "timings": refresh_result.timings,
-        },
+        meta=meta,
     )
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_topic(
+    req: SearchRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(_session_dep),
+) -> SearchResponse:
+    import logging
+
+    from app.config import settings
+
+    logger = logging.getLogger("kawn.search")
+    query = req.query.strip()
+    language = req.language or None
+
+    async with _query_lock(query):
+        # Fast path: a topic that already has cards is answered from the
+        # database right away. A live refresh fans out to ~15 sources and takes
+        # 8-10s, which is what made every repeat search feel broken. If the
+        # stored result is older than search_cache_fresh_seconds it is still
+        # returned now, and refreshed in the background for next time. The
+        # same filters (country gating, tab) are applied as on the live path.
+        # A search that names a language always goes live, since language
+        # changes what the news sources return.
+        if settings.search_instant_cache_enabled and not language:
+            existing = await topic_repo.get_by_query(session, query)
+            if existing:
+                summary = await _get_summary(session, existing.id)
+                if summary and await card_repo.count_for_topic(session, existing.id) > 0:
+                    age = (datetime.utcnow() - existing.updated_at).total_seconds() if existing.updated_at else 1e9
+                    if age > settings.search_cache_fresh_seconds:
+                        background_tasks.add_task(Backgroundrefresh, query)
+                    await topic_repo.record_search(session, existing)
+                    return await _search_response(
+                        session, req, existing, summary,
+                        {"refreshed": False, "instant_cache": True, "age_seconds": round(age, 1), "language": None},
+                    )
+
+        try:
+            refresh_result = await aggregation.refresh_topic(session, query, language=language)
+        except RefreshBusy:
+            raise HTTPException(
+                status_code=503,
+                detail="The server is busy refreshing other topics; please retry in a few seconds.",
+                headers={"Retry-After": "10"},
+            )
+        except Exception as e:
+            logger.exception("refresh_topic failed for query=%r language=%r", query, language)
+            raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
+
+        topic = await topic_repo.get_by_id(session, refresh_result.topic_id)
+        if not topic:
+            raise HTTPException(status_code=500, detail="Topic not created")
+        summary = await _get_summary(session, refresh_result.topic_id)
+        if not summary:
+            raise HTTPException(status_code=500, detail="Summary not created")
+
+        return await _search_response(
+            session, req, topic, summary,
+            {
+                "refreshed": True,
+                "instant_cache": False,
+                "language": language,
+                "partial": refresh_result.partial,
+                "missing_sources": refresh_result.missing_sources,
+                "cached_sources": refresh_result.cached_sources,
+                "source_freshness": refresh_result.source_freshness,
+                "disabled_sources": refresh_result.disabled_sources,
+                "timings": refresh_result.timings,
+            },
+        )
 
 
 from pydantic import BaseModel

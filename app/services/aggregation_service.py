@@ -871,6 +871,11 @@ class AggregationService:
         if not (await connector.enabled()):
             return []
 
+        cooldown_left = connector_health.breaker_open_for(fallback_source)
+        if cooldown_left is not None:
+            logger.info("%s skipped: failing repeatedly, retrying in %.0fs", fallback_source, cooldown_left)
+            return []
+
         started = time.monotonic()
         try:
             items = await asyncio.wait_for(

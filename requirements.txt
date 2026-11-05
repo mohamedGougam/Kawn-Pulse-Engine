@@ -24,3 +24,4 @@ websockets==17.3
 asyncpraw==8.0.3
 gunicorn==23.0.0
 greenlet==3.5.6
+vaderSentiment==3.3.2

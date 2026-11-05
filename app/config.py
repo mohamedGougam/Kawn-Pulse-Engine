@@ -87,6 +87,19 @@ class Settings(BaseSettings):
     # leaving only the single lightweight Lemmy endpoint reliably finishing
     # in time. Can still be overridden via CONNECTOR_TIMEOUT_SECONDS.
     connector_timeout_seconds: float = 8.0
+    # Repeat searches: if the topic already has cards, answer from the database
+    # immediately instead of running a 15-source live refresh (8-10s). Results
+    # older than search_cache_fresh_seconds are still returned at once and are
+    # refreshed in the background. Set SEARCH_INSTANT_CACHE_ENABLED=false to
+    # always search live.
+    search_instant_cache_enabled: bool = True
+    search_cache_fresh_seconds: int = 3600
+    # Circuit breaker: after this many consecutive failures (timeouts count) a
+    # source is skipped for connector_breaker_cooldown_seconds, so a dead or
+    # blocked source (e.g. Hashnode answering with an HTML bot-check page) stops
+    # costing every search a request and a wait. 0 disables the breaker.
+    connector_breaker_threshold: int = 3
+    connector_breaker_cooldown_seconds: float = 300.0
     # Overall budget for a live/search-triggered refresh. Once this elapses,
     # aggregation returns whatever connectors have finished instead of waiting
     # for stragglers. Kept at roughly 1.25x connector_timeout_seconds as a
