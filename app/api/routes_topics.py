@@ -145,6 +145,117 @@ async def _search_response(
         meta=meta,
     )
 
+# --- live refresh as a background task -------------------------------------
+# The live refresh runs as its own task with its own database session, so it
+# is NOT tied to the request: if the request returns early (deadline) or the
+# client disconnects, the refresh still finishes and stores its result.
+_live_tasks: dict[tuple[str, str | None], asyncio.Task] = {}
+
+
+async def _run_live_refresh(query: str, language: str | None):
+    async with get_session() as s:
+        result = await aggregation.refresh_topic(s, query, language=language)
+    _last_live_language[query] = language
+    if len(_last_live_language) > 2000:
+        _last_live_language.pop(next(iter(_last_live_language)), None)
+    return result
+
+
+def _start_live_refresh(query: str, language: str | None) -> asyncio.Task:
+    """Start (or join) the live refresh for this query+language."""
+    key = (query.strip().lower(), language)
+    task = _live_tasks.get(key)
+    if task is not None and not task.done():
+        return task
+    task = asyncio.create_task(_run_live_refresh(query, language))
+    _live_tasks[key] = task
+
+    def _finished(t: asyncio.Task) -> None:
+        if _live_tasks.get(key) is t:
+            _live_tasks.pop(key, None)
+        if not t.cancelled():
+            exc = t.exception()  # also marks it retrieved
+            if exc is not None and not isinstance(exc, RefreshBusy):
+                logging.getLogger("kawn.search").warning(
+                    "background live refresh failed for %r: %r", query, exc
+                )
+
+    task.add_done_callback(_finished)
+    return task
+
+
+def _live_pending(query: str, language: str | None) -> bool:
+    t = _live_tasks.get((query.strip().lower(), language))
+    return t is not None and not t.done()
+
+
+async def _stored_response(session: AsyncSession, req: SearchRequest, query: str) -> SearchResponse | None:
+    """What we can answer with right now while live is still running:
+    1) cards already in the database, else 2) the R2 backup files.
+    None if neither has anything."""
+    from app.config import settings
+
+    existing = await topic_repo.get_by_query(session, query)
+    if existing:
+        summary = await _get_summary(session, existing.id)
+        if summary and await card_repo.count_for_topic(session, existing.id) > 0:
+            age = (datetime.utcnow() - existing.updated_at).total_seconds() if existing.updated_at else 1e9
+            resp = await _search_response(
+                session, req, existing, summary,
+                {"refreshed": False, "instant_cache": False, "pending_refresh": True,
+                 "stored_from": "database", "age_seconds": round(age, 1), "language": None},
+            )
+            if resp.cards:
+                return resp
+
+    if not settings.r2_configured():
+        return None
+    try:
+        previews = await aggregation.build_cache_preview_cards(query, max_cards=settings.pulse_cards_per_topic)
+    except Exception:
+        previews = []
+    if not previews:
+        return None
+
+    now = datetime.utcnow()
+    topic_id = existing.id if existing else f"pending:{query.strip().lower()}"
+    cards = [
+        PulseCardSchema(
+            id=f"preview:{p.source}:{p.source_url}", topic=query, quote=p.quote, source=p.source,
+            sentiment="neutral", theme=None, language=p.language, source_url=p.source_url,
+            engagement_count=p.engagement_count, published_at=p.published_at,
+            display_label=p.display_label, created_at=p.published_at or now, is_preview=True,
+        )
+        for p in previews
+    ]
+    cards = annotate_and_filter(filter_visible_cards(cards, req.country), req.country, req.category)
+    if not cards:
+        return None
+    return SearchResponse(
+        topic=TopicSchema(
+            id=topic_id, query=query,
+            created_at=existing.created_at if existing else now,
+            updated_at=existing.updated_at if existing and existing.updated_at else now,
+        ),
+        summary=TopicSummarySchema(
+            topic_id=topic_id, summary_text="", sentiment_label="neutral", sentiment_score=0.0,
+            sentiment_breakdown=SentimentBreakdown(positive=0.0, neutral=1.0, negative=0.0),
+            themes=[], updated_at=now,
+        ),
+        source_breakdown=[],
+        cards=cards,
+        meta={"refreshed": False, "instant_cache": False, "pending_refresh": True,
+              "stored_from": "r2", "preview": True, "language": None},
+    )
+
+
+@router.get("/search-status")
+async def search_status(query: str = Query(min_length=1, max_length=160), language: str | None = Query(default=None, max_length=8)) -> dict:
+    """Is a live refresh for this search still running? The UI polls this after
+    a response flagged pending_refresh, then repeats the search (now instant)."""
+    q = query.strip()
+    return {"pending": _live_pending(q, language or None)}
+
 
 @router.post("/search", response_model=SearchResponse)
 async def search_topic(
@@ -188,8 +299,20 @@ async def search_topic(
                         {"refreshed": False, "instant_cache": True, "age_seconds": round(age, 1), "language": None},
                     )
 
+        task = _start_live_refresh(query, language)
+        deadline = settings.search_return_deadline_seconds
+        if deadline > 0:
+            done, _ = await asyncio.wait({task}, timeout=deadline)
+            if not done:
+                # Live is still running (it keeps going in the background).
+                # Answer now from what is already stored, if there is any.
+                early = await _stored_response(session, req, query)
+                if early is not None:
+                    return early
+        # Nothing stored to show (or cutoff disabled): wait for the live result.
+        await asyncio.wait({task})
         try:
-            refresh_result = await aggregation.refresh_topic(session, query, language=language)
+            refresh_result = task.result()
         except RefreshBusy:
             raise HTTPException(
                 status_code=503,
@@ -200,12 +323,10 @@ async def search_topic(
             logger.exception("refresh_topic failed for query=%r language=%r", query, language)
             raise HTTPException(status_code=500, detail=f"refresh_topic failed: {type(e).__name__}: {e}")
 
+        await session.commit()  # end any old read snapshot so we see the task's writes
         topic = await topic_repo.get_by_id(session, refresh_result.topic_id)
         if not topic:
             raise HTTPException(status_code=500, detail="Topic not created")
-        _last_live_language[query] = language
-        if len(_last_live_language) > 2000:
-            _last_live_language.pop(next(iter(_last_live_language)), None)
         summary = await _get_summary(session, refresh_result.topic_id)
         if not summary:
             raise HTTPException(status_code=500, detail="Summary not created")

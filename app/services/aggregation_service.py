@@ -1009,11 +1009,14 @@ async def _upsert_source_breakdown(
         "DevTo", "Hashnode", "Lobsters", "PeerTube", "ProductHunt", "Wikipedia", "Discourse",
     }
     now = datetime.utcnow()
+    # ONE query for every existing row of this topic. This used to run one
+    # SELECT per source (~14+ sequential round-trips to the remote database
+    # on every search); with Neon at tens of ms per round-trip that was a
+    # fixed cost of up to a second on each refresh.
+    res = await session.execute(select(SourceBreakdown).where(SourceBreakdown.topic_id == topic_id))
+    existing_by_source = {row.source: row for row in res.scalars().all()}
     for src in sources:
-        res = await session.execute(
-            select(SourceBreakdown).where(SourceBreakdown.topic_id == topic_id).where(SourceBreakdown.source == src)
-        )
-        existing = res.scalar_one_or_none()
+        existing = existing_by_source.get(src)
         if existing:
             existing.item_count = int(item_counts.get(src, 0))
             existing.card_count = int(card_counts.get(src, 0))
@@ -1030,5 +1033,3 @@ async def _upsert_source_breakdown(
                 updated_at=now,
             )
         )
-
-    await session.commit()

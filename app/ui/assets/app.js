@@ -402,6 +402,20 @@ async function onSearch() {
       renderLanguageChips();
       applyCardFilter();
     }
+    if (resp.meta && resp.meta.pending_refresh) {
+      // Saved results are shown; the live refresh is still running. Wait for it,
+      // then repeat the search (answered instantly from the fresh data).
+      setStatus(`Showing saved results for "${q}" - updating with live data…`);
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const st = await fetch(`/api/topics/search-status?query=${encodeURIComponent(q)}${lang ? `&language=${encodeURIComponent(lang)}` : ""}`)
+          .then((r) => (r.ok ? r.json() : { pending: false })).catch(() => ({ pending: false }));
+        if (!st.pending) break;
+      }
+      const fresh = await apiSearch(q, lang || null);
+      renderSummary(fresh);
+      if (lang) { applyCardFilter(); }
+    }
     setStatus(`Done. Showing pulse for "${q}"${lang ? ` (${langLabel(lang)})` : ""}.`);
   } catch (e) {
     setStatus(String(e?.message || e), true);

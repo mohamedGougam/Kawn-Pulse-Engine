@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     # refreshed in the background. Set SEARCH_INSTANT_CACHE_ENABLED=false to
     # always search live.
     search_instant_cache_enabled: bool = True
+    # Hard cap on how long a search request waits for the live refresh. At this
+    # deadline the live refresh KEEPS RUNNING in the background and the request
+    # is answered from what is already stored (database cards, else the R2
+    # backup files), flagged meta.pending_refresh=true. If nothing is stored for
+    # the topic yet, the request keeps waiting for the live result. 0 disables
+    # the cutoff (always wait for live).
+    search_return_deadline_seconds: float = 8.0
     search_cache_fresh_seconds: int = 3600
     # Circuit breaker: after this many consecutive failures (timeouts count) a
     # source is skipped for connector_breaker_cooldown_seconds, so a dead or
