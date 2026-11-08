@@ -217,20 +217,34 @@ async def _stored_response(session: AsyncSession, req: SearchRequest, query: str
     if not previews:
         return None
 
+    # Same sentiment service the normal cards use (VADER in production: cheap,
+    # no model to load; non-English text comes out neutral). Off the event loop.
+    try:
+        results = await asyncio.to_thread(
+            aggregation.ai.sentiment.analyze, [(p.quote or "")[:240] for p in previews]
+        )
+        sent = [r.label if r.label in ("positive", "neutral", "negative") else "neutral" for r in results]
+    except Exception:
+        sent = []
+    sent = (sent + ["neutral"] * len(previews))[: len(previews)]
+
     now = datetime.utcnow()
     topic_id = existing.id if existing else f"pending:{query.strip().lower()}"
     cards = [
         PulseCardSchema(
             id=f"preview:{p.source}:{p.source_url}", topic=query, quote=p.quote, source=p.source,
-            sentiment="neutral", theme=None, language=p.language, source_url=p.source_url,
+            sentiment=sent[i], theme=None, language=p.language, source_url=p.source_url,
             engagement_count=p.engagement_count, published_at=p.published_at,
             display_label=p.display_label, created_at=p.published_at or now, is_preview=True,
         )
-        for p in previews
+        for i, p in enumerate(previews)
     ]
     cards = annotate_and_filter(filter_visible_cards(cards, req.country), req.country, req.category)
     if not cards:
         return None
+    counts = {k: sum(1 for c in cards if c.sentiment == k) for k in ("positive", "neutral", "negative")}
+    total = max(1, sum(counts.values()))
+    dominant = max(counts.items(), key=lambda kv: kv[1])[0]
     return SearchResponse(
         topic=TopicSchema(
             id=topic_id, query=query,
@@ -238,8 +252,9 @@ async def _stored_response(session: AsyncSession, req: SearchRequest, query: str
             updated_at=existing.updated_at if existing and existing.updated_at else now,
         ),
         summary=TopicSummarySchema(
-            topic_id=topic_id, summary_text="", sentiment_label="neutral", sentiment_score=0.0,
-            sentiment_breakdown=SentimentBreakdown(positive=0.0, neutral=1.0, negative=0.0),
+            topic_id=topic_id, summary_text="", sentiment_label=dominant,
+            sentiment_score=round(counts[dominant] / total, 4),
+            sentiment_breakdown=SentimentBreakdown(**{k: round(v / total, 4) for k, v in counts.items()}),
             themes=[], updated_at=now,
         ),
         source_breakdown=[],
