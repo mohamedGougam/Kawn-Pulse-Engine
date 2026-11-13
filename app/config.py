@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     # the topic yet, the request keeps waiting for the live result. 0 disables
     # the cutoff (always wait for live).
     search_return_deadline_seconds: float = 8.0
+    # Explore feed: all cold-subject R2 previews run in parallel; whatever is
+    # ready after this many seconds is returned, the rest is dropped (the
+    # background refresh fills those subjects for the next load).
+    explore_preview_budget_seconds: float = 4.0
+    explore_preview_concurrency: int = 4
     search_cache_fresh_seconds: int = 3600
     # Circuit breaker: after this many consecutive failures (timeouts count) a
     # source is skipped for connector_breaker_cooldown_seconds, so a dead or

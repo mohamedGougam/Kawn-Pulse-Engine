@@ -20,6 +20,40 @@ class TopicRepository:
         res = await session.execute(select(Topic).where(Topic.query == query))
         return res.scalar_one_or_none()
 
+    async def get_by_ids(self, session: AsyncSession, topic_ids: list[str]) -> list[Topic]:
+        """All the topics in ONE query (the callers used to run one per id)."""
+        if not topic_ids:
+            return []
+        res = await session.execute(select(Topic).where(Topic.id.in_(topic_ids)))
+        return list(res.scalars().all())
+
+    async def get_or_create_many(self, session: AsyncSession, queries: list[str]) -> list[Topic]:
+        """One SELECT for the existing topics, one INSERT batch + ONE commit for
+        the missing ones, returned in the same order as the given queries. Replaces a
+        SELECT + SELECT + INSERT + COMMIT round-trip chain per query."""
+        if not queries:
+            return []
+        res = await session.execute(select(Topic).where(Topic.query.in_(queries)))
+        by_query: dict[str, Topic] = {}
+        for t in res.scalars().all():
+            by_query.setdefault(t.query, t)
+        missing = [q for q in queries if q not in by_query]
+        if missing:
+            now = datetime.utcnow()
+            new = [Topic(query=q, created_at=now, updated_at=now) for q in missing]
+            try:
+                session.add_all(new)
+                await session.commit()
+                for t in new:
+                    by_query[t.query] = t
+            except Exception:
+                await session.rollback()
+                logger.warning("Batch topic create failed; re-reading", exc_info=True)
+                res = await session.execute(select(Topic).where(Topic.query.in_(queries)))
+                for t in res.scalars().all():
+                    by_query.setdefault(t.query, t)
+        return [by_query[q] for q in queries if q in by_query]
+
     async def upsert(self, session: AsyncSession, query: str) -> Topic:
         existing = await self.get_by_query(session, query)
         now = datetime.utcnow()

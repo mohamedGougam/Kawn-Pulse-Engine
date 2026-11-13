@@ -386,26 +386,13 @@ async def Getexplorefeed(
 ) -> list[PulseCardSchema]:
     from app.config import settings
 
-    subjects = settings.Discover_subjects
-    topics_db = []
-    cold_start_subjects: list[str] = []
-    for sub in subjects:
-        topic = await topic_repo.get_by_query(session, sub)
-        if not topic:
-            try:
-                topic = await topic_repo.upsert(session, sub)
-                background_tasks.add_task(Backgroundrefresh, sub)
-                cold_start_subjects.append(sub)
-            except Exception:
-                pass
-        else:
-            count = await card_repo.count_for_topic(session, topic.id)
-            if count == 0:
-                background_tasks.add_task(Backgroundrefresh, sub)
-                cold_start_subjects.append(sub)
-        if topic:
-            topics_db.append(topic)
-
+    subjects = [x for x in settings.Discover_subjects]
+    # ONE select + (only if some are missing) ONE batch insert/commit for all
+    # subjects, instead of 2-4 sequential database round-trips per subject.
+    try:
+        topics_db = await topic_repo.get_or_create_many(session, subjects)
+    except Exception:
+        topics_db = []
     if not topics_db:
         return []
 
@@ -414,36 +401,52 @@ async def Getexplorefeed(
 
     cards_db = await card_repo.Listcardsformultipletopics(session, topic_ids, limit_per_topic=8)
 
-    # Cold-start instant paint: for any Discover subject with 0 DB cards
-    # right now (background refresh just kicked off above but hasn't
-    # landed yet), pull whatever's already sitting in the R2 heavy-fetch
-    # cache so the feed isn't empty for that subject on first load. These
-    # are cheap, AI-free preview cards — real cards replace them once the
-    # background refresh above completes.
-    preview_results: list[PulseCardSchema] = []
+    # A subject with no cards at all is "cold" (same rule as the old per-subject
+    # count == 0 check, derived from the query above instead of N more queries).
+    topics_with_cards = {c.topic_id for c in cards_db}
+    cold_start_subjects = [t.query for t in topics_db if t.id not in topics_with_cards]
     for sub in cold_start_subjects:
-        try:
-            previews = await aggregation.build_cache_preview_cards(sub, max_cards=8)
-        except Exception:
-            previews = []
-        for p in previews:
-            preview_results.append(
-                PulseCardSchema(
-                    id=f"preview:{p.source}:{p.source_url}",
-                    topic=p.topic,
-                    quote=p.quote,
-                    source=p.source,
-                    sentiment="neutral",
-                    theme=None,
-                    language=p.language,
-                    source_url=p.source_url,
-                    engagement_count=p.engagement_count,
-                    published_at=p.published_at,
-                    display_label=p.display_label,
-                    created_at=p.published_at or datetime.utcnow(),
-                    is_preview=True,
+        background_tasks.add_task(Backgroundrefresh, sub)
+
+    # Cold-start instant paint from the R2 cache. All cold subjects run in
+    # PARALLEL (bounded concurrency) under one overall time budget; before,
+    # they ran one after another and each could wait the full R2 read timeout.
+    preview_results: list[PulseCardSchema] = []
+    if cold_start_subjects:
+        sem = asyncio.Semaphore(max(1, settings.explore_preview_concurrency))
+
+        async def _preview(sub: str):
+            async with sem:
+                try:
+                    return await aggregation.build_cache_preview_cards(sub, max_cards=8)
+                except Exception:
+                    return []
+
+        ptasks = [asyncio.create_task(_preview(sub)) for sub in cold_start_subjects]
+        pdone, ppending = await asyncio.wait(ptasks, timeout=settings.explore_preview_budget_seconds)
+        for t in ppending:
+            t.cancel()
+        for t in ptasks:
+            if t not in pdone or t.cancelled() or t.exception() is not None:
+                continue
+            for p in t.result():
+                preview_results.append(
+                    PulseCardSchema(
+                        id=f"preview:{p.source}:{p.source_url}",
+                        topic=p.topic,
+                        quote=p.quote,
+                        source=p.source,
+                        sentiment="neutral",
+                        theme=None,
+                        language=p.language,
+                        source_url=p.source_url,
+                        engagement_count=p.engagement_count,
+                        published_at=p.published_at,
+                        display_label=p.display_label,
+                        created_at=p.published_at or datetime.utcnow(),
+                        is_preview=True,
+                    )
                 )
-            )
 
     results = [
         PulseCardSchema(
@@ -480,11 +483,7 @@ async def Getbulkcards(
     if not req.topic_ids:
         return []
 
-    topics_db = []
-    for tid in req.topic_ids:
-        topic = await topic_repo.get_by_id(session, tid)
-        if topic:
-            topics_db.append(topic)
+    topics_db = await topic_repo.get_by_ids(session, list(req.topic_ids))  # one query, not one per id
 
     topic_map = {t.id: t.query for t in topics_db}
     cards_db = await card_repo.Listcardsformultipletopics(session, req.topic_ids, limit_per_topic=5)
